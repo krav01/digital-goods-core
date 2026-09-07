@@ -30,8 +30,8 @@
 
 ## Current handoff
 
-Phases 0 and 1a are complete. Phase 1b implements the order/payment/delivery flow, PostgreSQL migrations, durable supplier A, and integration tests. Local build, unit/race tests, and vet have passed. PostgreSQL integration and Compose checks are pending CI verification; do not mark them passed without inspecting the run for the exact commit.
+Phases 0, 1a and 1b are implemented. Phase 1b includes the order/payment/delivery flow, PostgreSQL migrations, durable supplier A, and integration tests. For code commit `0e77e26`, local Go 1.26.8 build/unit/race/vet/lint/security checks passed; GitHub Actions run `34162188953` passed all three jobs: check, PostgreSQL integration and clean-checkout Compose smoke. Delivery is in PR #1, branch `feat/order-delivery-flow`, not yet merged into main. Recheck PR state and the latest commit's checks before relying on these observations.
 
-Next: finish phase 1b CI validation and review; then phase 2, GPT-6 Astra / high. Add 50-event races, independent worker-process competition, and controlled crash recovery. Supplier B, fault injection, reconciliation and large-catalog measurements are not implemented.
+Next: phase 2, GPT-6 Astra / high. Add 50-event races, independent worker-process competition, and controlled crash recovery. Supplier B, fault injection, reconciliation and large-catalog measurements are not implemented. The phase 1b architecture review is in `docs/reviews/phase-1b.md`; accepted limits and revisit triggers are explicit.
 
 Environment observed during phase 0: local Go is 1.26.3; `docker` was not found on PATH. GitHub CLI is authenticated as `krav01` when network permission is available. Recheck these facts before relying on them. Keep Go caches in the session's writable `work/` outside the repository if global caches are sandbox-blocked; never commit them. Do not claim Docker-backed checks passed without running them.

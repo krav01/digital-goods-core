@@ -49,6 +49,8 @@ manual review pass against ADR-001, not an independent-agent review.
 
 ## Verification gate
 
-Run local build/unit/race/vet/lint/security checks, then inspect the exact GitHub
-Actions commit for PostgreSQL integration and clean-checkout Compose smoke.
-The current verified status is recorded in `AGENTS.md` and `docs/roadmap.md`.
+Code commit `0e77e26` passed local Go 1.26.8 build/unit/race/vet/lint/security
+checks. [Actions run 34162188953](https://github.com/krav01/digital-goods-core/actions/runs/34162188953)
+passed check, PostgreSQL integration and clean-checkout Compose smoke. No
+blocking findings remain for phase 1b; the deferred scenarios above are not
+covered by this result. The current handoff is in `AGENTS.md` and `docs/roadmap.md`.
