@@ -1,0 +1,15 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Build and validation outputs
+/bin/
+/work/
+/coverage.out
+/coverage.html
+*.test
+
+# Editor / OS files
+.DS_Store
+.idea/
