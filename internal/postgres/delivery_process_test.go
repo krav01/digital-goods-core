@@ -258,9 +258,15 @@ func TestConcurrentLastKeyProcesses(t *testing.T) {
 		f.create(t, id)
 		request(t, f.api.url, "POST", "/webhooks/payment", payload(id, "evt_"+id), nil, 200)
 	}
-	workers := []*childProcess{f.worker(t, ""), f.worker(t, "")}
+	workers := []*childProcess{f.worker(t, "after_prepare"), f.worker(t, "after_prepare")}
 	for _, w := range workers {
 		w.resume(t)
+	}
+	for _, w := range workers {
+		w.await(t, "checkpoint") // Both orders are prepared by different processes.
+	}
+	for _, w := range workers {
+		w.resume(t) // Release the competing supplier requests together.
 	}
 	awaitCount(t, f.app, "SELECT count(*) FROM orders WHERE status='delivered'", 1)
 	awaitCount(t, f.app, "SELECT count(*) FROM orders WHERE status='out_of_stock'", 1)
