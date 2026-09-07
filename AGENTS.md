@@ -2,7 +2,7 @@
 
 - Work diff-first. Read the current task, repository-local instructions, project memory/map when available, and the current diff before broad exploration.
 - Keep scope narrow. Do not refactor neighboring code or add abstractions unless the requested behavior or a demonstrated risk requires it.
-- Find one authoritative local implementation pattern before generating equivalent code. This repository currently has architecture documents only; do not invent an existing code convention.
+- Find one authoritative local implementation pattern before generating equivalent code. Use the existing HTTP handlers, PostgreSQL transactions, and manual wiring in cmd/ as local patterns.
 - Batch 2–4 related edits when they form one coherent change.
 - Prefer deterministic local tools for mechanical correctness: formatter, compiler, targeted tests, linters, security tools, git, and gh.
 - Match verification to risk: targeted checks for low risk; package/module + lint for medium risk; full relevant race/integration/security/performance checks only for high risk.
@@ -30,8 +30,8 @@
 
 ## Current handoff
 
-Phase 0 is documented; no application code, migrations, test suite, Docker setup, or CI exists yet.
+Phases 0 and 1a are complete. Phase 1b implements the order/payment/delivery flow, PostgreSQL migrations, durable supplier A, and integration tests. Local build, unit/race tests, and vet have passed. PostgreSQL integration and Compose checks are pending CI verification; do not mark them passed without inspecting the run for the exact commit.
 
-Next: phase 1a, GPT-5.6 Terra / medium. Initialize the module, implement process lifecycle and health/readiness, pin dependencies, add build/check commands and reproducible local infrastructure. Before selecting versions, verify current tool/dependency compatibility.
+Next: finish phase 1b CI validation and review; then phase 2, GPT-6 Astra / high. Add 50-event races, independent worker-process competition, and controlled crash recovery. Supplier B, fault injection, reconciliation and large-catalog measurements are not implemented.
 
 Environment observed during phase 0: local Go is 1.26.3; `docker` was not found on PATH. GitHub CLI is authenticated as `krav01` when network permission is available. Recheck these facts before relying on them. Keep Go caches in the session's writable `work/` outside the repository if global caches are sandbox-blocked; never commit them. Do not claim Docker-backed checks passed without running them.

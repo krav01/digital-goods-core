@@ -15,12 +15,16 @@ const (
 type Config struct {
 	HTTPAddress     string
 	ShutdownTimeout time.Duration
+	DatabaseURL     string
+	SupplierURL     string
 }
 
 func FromEnv() (Config, error) {
 	config := Config{
 		HTTPAddress:     envOrDefault("HTTP_ADDR", defaultHTTPAddress),
 		ShutdownTimeout: defaultShutdownTimeout,
+		DatabaseURL:     strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		SupplierURL:     envOrDefault("SUPPLIER_URL", "http://127.0.0.1:8081"),
 	}
 
 	if rawTimeout := strings.TrimSpace(os.Getenv("SHUTDOWN_TIMEOUT")); rawTimeout != "" {

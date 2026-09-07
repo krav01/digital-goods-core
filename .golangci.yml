@@ -1,0 +1,19 @@
+version: "2"
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - errorlint
+    - nilerr
+    - durationcheck
+    - nolintlint
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
