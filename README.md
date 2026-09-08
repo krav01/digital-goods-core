@@ -2,14 +2,14 @@
 
 Go-бэкенд магазина цифровых товаров: заказы, платёжные вебхуки и однократная выдача товара при повторах, гонках и сбоях поставщиков.
 
-**Статус:** основной поток реализован: заказы, долговечный inbox платежей, очередь выдачи, миграции PostgreSQL и поставщик A с отдельной БД. Полный запуск Compose и интеграционные проверки PostgreSQL [прошли в CI этапа 1b](https://github.com/krav01/digital-goods-core/actions/runs/34162188953). Этап 2 добавляет гонки независимых процессов и SIGKILL-восстановление; результаты проверки конкретного commit доступны в [PR #2](https://github.com/krav01/digital-goods-core/pull/2). Следующий этап — поставщик B и управляемые сбои.
+**Статус:** реализованы все этапы ТЗ: durable inbox платежей, очередь выдачи PostgreSQL, независимые поставщики A/B, exactly-once под процессными гонками, сверка и каталог. Полный набор (`check`, `compose`, `integration`) прошёл в [CI PR #15](https://github.com/krav01/digital-goods-core/pull/15).
 
 ## Принятые решения
 
 - Модульный монолит на Go, зависимости через обычные конструкторы; без DI-фреймворка.
 - PostgreSQL — источник истины для заказов, входящих событий и надёжных фоновых задач.
 - `net/http`, `pgx/v5`, `log/slog`, `golang-migrate`; версии закреплены в `go.mod` и `go.sum`.
-- API и worker запускаются отдельными процессами из одного модуля. Заглушка A доступна по HTTP с независимой БД; B запланирована.
+- API и worker запускаются отдельными процессами из одного модуля. Заглушки A/B доступны по HTTP с независимыми БД.
 - Доставка сообщений и выполнение задач допускают повторы. Однократность бизнес-эффекта обеспечивается транзакциями и идемпотентностью поставщика.
 - После неопределённого результата A переключение на B запрещено. Исчерпание повторов не доказывает отсутствие выдачи.
 
@@ -86,6 +86,10 @@ Configuration:
 | `DATABASE_URL` | required | Application or supplier PostgreSQL DSN, depending on the process |
 | `SUPPLIER_URL` | `http://127.0.0.1:8081` | Worker-to-supplier HTTP endpoint |
 | `SUPPLIER_B_URL` | `http://127.0.0.1:8082` | Worker-to-supplier B HTTP endpoint |
+| `SUPPLIER_AFTER_ISSUE_DELAY` | unset | Delay response after durable issue; `3s` reproduces timeout-after-issue with the worker's 2s client timeout |
+| `SUPPLIER_FORCE_FINAL_UNAVAILABLE` | `false` | Always persist a final refusal instead of issuing a key |
+| `SUPPLIER_FINAL_UNAVAILABLE_PERCENT` | `0` | Percent (0–100) of durable final refusals before issue |
+| `SUPPLIER_TRANSIENT_ERROR_PERCENT` | `0` | Percent (0–100) of non-final 503 responses before supplier storage is called |
 
 ## Checks
 
@@ -97,11 +101,25 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 # Dedicated disposable PostgreSQL server; role needs CREATEDB:
 TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/postgres?sslmode=disable' make integration
 TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/postgres?sslmode=disable' make reliability
+TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/postgres?sslmode=disable' ./scripts/reliability.sh
 ```
 
 `make check` runs formatting, compilation, shuffled unit tests and vet. Integration tests create and drop only uniquely named `dgc_*_test` databases; do not point them at a production server. They cover the HTTP flow, early/replayed/invalid payments, terminal-state conflicts, persisted supplier replay/refusal, stale-lease rejection, and restock recovery.
 
 `make reliability` runs the phase 2 multi-process scenarios three times with race detection and shuffled order: 50 concurrent webhooks (same/distinct IDs and before order creation), four workers, concurrent supplier requests, last-key contention, SIGKILL before/after transaction boundaries and late-result fencing. Tests print process IDs and scenario outcomes; successful effects are checked in both application and supplier A databases. One crash test waits for the real 15-second lease expiry. Test-only checkpoints pause the production worker through an adapter; they are not production configuration. Requires a Unix-like OS for SIGTERM/SIGKILL; the verified CI platform is recorded with the phase result. See [phase 2 review and limits](docs/reviews/phase-2.md).
+
+`scripts/reliability.sh` is the acceptance entry point for the same real HTTP webhook harness: it delegates to `make reliability` and requires `TEST_DATABASE_URL`. It sends the 50 parallel payment webhooks itself; no external payment provider is involved.
+
+To reproduce the final A → B fallback with Compose, reset the disposable volumes, start A in its durable-final-refusal mode, then run the normal payment stub:
+
+```sh
+docker compose down -v
+SUPPLIER_A_FORCE_FINAL_UNAVAILABLE=true docker compose up -d --build
+./scripts/smoke.sh
+docker compose logs worker
+```
+
+The resulting order is delivered from B. To exercise timeout-after-issue instead, start with `SUPPLIER_A_AFTER_ISSUE_DELAY=3s`; the worker retries A with the same persisted `request_id` and does not use B. Prefix the other fault settings with `SUPPLIER_A_` or `SUPPLIER_B_` in Compose (for example, `SUPPLIER_B_TRANSIENT_ERROR_PERCENT=25`).
 
 CI also builds and starts Compose from a clean checkout and runs the smoke script. Local Docker execution was unavailable in the development sandbox; consult the [CI runs](https://github.com/krav01/digital-goods-core/actions/workflows/ci.yml) for PostgreSQL/container verification.
 

@@ -74,6 +74,10 @@ services:
     environment:
       HTTP_ADDR: :8081
       DATABASE_URL: postgres://supplier:supplier-dev-only@supplier-db:5432/supplier_a?sslmode=disable
+      SUPPLIER_AFTER_ISSUE_DELAY: ${SUPPLIER_A_AFTER_ISSUE_DELAY:-}
+      SUPPLIER_FORCE_FINAL_UNAVAILABLE: ${SUPPLIER_A_FORCE_FINAL_UNAVAILABLE:-false}
+      SUPPLIER_FINAL_UNAVAILABLE_PERCENT: ${SUPPLIER_A_FINAL_UNAVAILABLE_PERCENT:-0}
+      SUPPLIER_TRANSIENT_ERROR_PERCENT: ${SUPPLIER_A_TRANSIENT_ERROR_PERCENT:-0}
     depends_on:
       migrate-supplier:
         condition: service_completed_successfully
@@ -83,6 +87,10 @@ services:
     environment:
       HTTP_ADDR: :8082
       DATABASE_URL: postgres://supplier:supplier-dev-only@supplier-b-db:5432/supplier_b?sslmode=disable
+      SUPPLIER_AFTER_ISSUE_DELAY: ${SUPPLIER_B_AFTER_ISSUE_DELAY:-}
+      SUPPLIER_FORCE_FINAL_UNAVAILABLE: ${SUPPLIER_B_FORCE_FINAL_UNAVAILABLE:-false}
+      SUPPLIER_FINAL_UNAVAILABLE_PERCENT: ${SUPPLIER_B_FINAL_UNAVAILABLE_PERCENT:-0}
+      SUPPLIER_TRANSIENT_ERROR_PERCENT: ${SUPPLIER_B_TRANSIENT_ERROR_PERCENT:-0}
     depends_on:
       migrate-supplier-b:
         condition: service_completed_successfully
