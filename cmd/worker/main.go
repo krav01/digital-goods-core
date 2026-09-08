@@ -24,6 +24,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("invalid SUPPLIER_URL")
 	}
+	u, err = url.Parse(cfg.SupplierBURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("invalid SUPPLIER_B_URL")
+	}
 	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -32,5 +36,6 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err := postgres.Ready(ctx, pool); err != nil {
 		return err
 	}
-	return delivery.NewWorker(postgres.New(pool), supplier.NewClient(cfg.SupplierURL), logger).Run(ctx)
+	issuers := map[string]delivery.Issuer{"A": supplier.NewClient(cfg.SupplierURL), "B": supplier.NewClient(cfg.SupplierBURL)}
+	return delivery.NewWorkerWithSuppliers(postgres.New(pool), issuers, logger).Run(ctx)
 }
