@@ -28,11 +28,33 @@ import (
 )
 
 type fixture struct {
-	app, sup *pgxpool.Pool
-	store    *postgres.Store
-	issuer   *postgres.SupplierStore
-	worker   *delivery.Worker
-	api      *httptest.Server
+	app, sup, supB  *pgxpool.Pool
+	store           *postgres.Store
+	issuer, issuerB *postgres.SupplierStore
+	worker          *delivery.Worker
+	api             *httptest.Server
+}
+
+type issuerFunc func(context.Context, delivery.Request) (delivery.Result, error)
+
+func (f issuerFunc) Issue(ctx context.Context, request delivery.Request) (delivery.Result, error) {
+	return f(ctx, request)
+}
+
+type delayedResponseHandler struct {
+	next  http.Handler
+	delay time.Duration
+}
+
+func (h delayedResponseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	recorder := httptest.NewRecorder()
+	h.next.ServeHTTP(recorder, r)
+	time.Sleep(h.delay)
+	for key, values := range recorder.Header() {
+		w.Header()[key] = values
+	}
+	w.WriteHeader(recorder.Code)
+	_, _ = w.Write(recorder.Body.Bytes())
 }
 
 // Only generated databases ending in _test are created/dropped. Existing databases are never reset.
@@ -103,12 +125,18 @@ func setup(t *testing.T) *fixture {
 	t.Helper()
 	app, _ := database(t, "app")
 	sup, _ := database(t, "supplier")
-	f := &fixture{app: app, sup: sup, store: postgres.New(app), issuer: postgres.NewSupplier(sup)}
+	supB, _ := database(t, "supplier-b")
+	f := &fixture{app: app, sup: sup, supB: supB, store: postgres.New(app), issuer: postgres.NewSupplier(sup), issuerB: postgres.NewSupplier(supB)}
 	srv := httptest.NewServer(supplier.NewHandler(f.issuer))
 	t.Cleanup(srv.Close)
+	srvB := httptest.NewServer(supplier.NewHandler(f.issuerB))
+	t.Cleanup(srvB.Close)
 	f.api = httptest.NewServer(httpapi.NewHandler(f.store))
 	t.Cleanup(f.api.Close)
-	f.worker = delivery.NewWorker(f.store, supplier.NewClient(srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.worker = delivery.NewWorkerWithSuppliers(f.store, map[string]delivery.Issuer{
+		"A": supplier.NewClient(srv.URL),
+		"B": supplier.NewClient(srvB.URL),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return f
 }
 
@@ -215,6 +243,97 @@ func TestHTTPOrderPaymentDelivery(t *testing.T) {
 	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
 	payload["amount"] = 501
 	request(t, f.api.URL, "POST", "/webhooks/payment", payload, nil, 409)
+}
+
+func TestSupplierInventoriesAreDisjoint(t *testing.T) {
+	f := setup(t)
+	rows, err := f.sup.Query(t.Context(), "SELECT code FROM inventory_keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	aCodes := make(map[string]struct{})
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		aCodes[code] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = f.supB.Query(t.Context(), "SELECT code FROM inventory_keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := aCodes[code]; exists {
+			t.Fatalf("supplier inventories overlap on code %q", code)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeliveryFallsBackToSupplierBAfterDurableARefusal(t *testing.T) {
+	f := setup(t)
+	if _, err := f.sup.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku=$1", "STEAM-TOPUP-500"); err != nil {
+		t.Fatal(err)
+	}
+	paid(t, f, "ord_supplier_b")
+	step(t, f)
+	if _, err := f.app.Exec(t.Context(), "UPDATE delivery_jobs SET available_at=now() WHERE order_id=$1", "ord_supplier_b"); err != nil {
+		t.Fatal(err)
+	}
+	step(t, f)
+
+	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='refused'", 1)
+	count(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	var provider string
+	if err := f.app.QueryRow(t.Context(), "SELECT supplier FROM deliveries WHERE order_id=$1", "ord_supplier_b").Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "B" {
+		t.Fatalf("delivery supplier = %q, want B", provider)
+	}
+}
+
+func TestDeliveryDoesNotFallbackAfterUnknownSupplierResult(t *testing.T) {
+	f := setup(t)
+	delayedA := httptest.NewServer(delayedResponseHandler{
+		next:  supplier.NewHandler(f.issuer),
+		delay: 3 * time.Second,
+	})
+	t.Cleanup(delayedA.Close)
+	bCalls := 0
+	f.worker = delivery.NewWorkerWithSuppliers(f.store, map[string]delivery.Issuer{
+		"A": supplier.NewClient(delayedA.URL),
+		"B": issuerFunc(func(context.Context, delivery.Request) (delivery.Result, error) {
+			bCalls++
+			return delivery.Result{}, errors.New("supplier B must not be called")
+		}),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	paid(t, f, "ord_unknown_a")
+	step(t, f)
+	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	if bCalls != 0 {
+		t.Fatalf("supplier B calls = %d, want 0", bCalls)
+	}
+	var supplierName, state string
+	if err := f.app.QueryRow(t.Context(), "SELECT supplier,state FROM delivery_operations WHERE order_id=$1", "ord_unknown_a").Scan(&supplierName, &state); err != nil {
+		t.Fatal(err)
+	}
+	if supplierName != "A" || state != "unknown" {
+		t.Fatalf("operation = (%q, %q), want (A, unknown)", supplierName, state)
+	}
 }
 
 func TestEarlyPayment(t *testing.T) {
@@ -352,7 +471,14 @@ func TestOutOfStockRestoresAfterRestock(t *testing.T) {
 	if _, err := f.sup.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.supB.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'"); err != nil {
+		t.Fatal(err)
+	}
 	paid(t, f, "ord_empty")
+	step(t, f)
+	if _, err := f.app.Exec(t.Context(), "UPDATE delivery_jobs SET available_at=now()"); err != nil {
+		t.Fatal(err)
+	}
 	step(t, f)
 	o, err := f.store.GetOrder(t.Context(), "ord_empty")
 	if err != nil || o.Status != "out_of_stock" {
@@ -369,6 +495,7 @@ func TestOutOfStockRestoresAfterRestock(t *testing.T) {
 	if err != nil || o.Code != "TEST-RESTOCK" || o.Status != "delivered" {
 		t.Fatalf("%+v %v", o, err)
 	}
-	count(t, f.app, "SELECT count(*) FROM delivery_operations", 2)
+	count(t, f.app, "SELECT count(*) FROM delivery_operations", 3)
 	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	count(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='refused'", 1)
 }

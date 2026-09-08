@@ -60,8 +60,8 @@ func (s *Store) PrepareDelivery(ctx context.Context, lease delivery.Lease) (deli
 		}
 		var generation int
 		var state string
-		err := tx.QueryRow(ctx, `SELECT request_id,sku,generation,state FROM delivery_operations
-			WHERE order_id=$1 ORDER BY generation DESC LIMIT 1`, lease.OrderID).Scan(&req.RequestID, &req.SKU, &generation, &state)
+		err := tx.QueryRow(ctx, `SELECT request_id,sku,supplier,generation,state FROM delivery_operations
+			WHERE order_id=$1 ORDER BY generation DESC LIMIT 1`, lease.OrderID).Scan(&req.RequestID, &req.SKU, &req.Supplier, &generation, &state)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
@@ -74,8 +74,13 @@ func (s *Store) PrepareDelivery(ctx context.Context, lease delivery.Lease) (deli
 			if err := tx.QueryRow(ctx, "SELECT sku FROM orders WHERE id=$1", lease.OrderID).Scan(&req.SKU); err != nil {
 				return err
 			}
+			if req.Supplier != "A" {
+				req.Supplier = "A"
+			} else {
+				req.Supplier = "B"
+			}
 			if _, err := tx.Exec(ctx, `INSERT INTO delivery_operations(request_id,order_id,supplier,generation,sku)
-				VALUES ($1,$2,'A',$3,$4)`, req.RequestID, req.OrderID, generation+1, req.SKU); err != nil {
+				VALUES ($1,$2,$3,$4,$5)`, req.RequestID, req.OrderID, req.Supplier, generation+1, req.SKU); err != nil {
 				return err
 			}
 		}
@@ -105,7 +110,7 @@ func (s *Store) FinishDelivery(ctx context.Context, lease delivery.Lease, req de
 			if _, err := tx.Exec(ctx, `UPDATE delivery_operations SET state='issued',reason='' WHERE request_id=$1`, req.RequestID); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO deliveries(order_id,request_id,supplier,code) VALUES ($1,$2,'A',$3)`, req.OrderID, req.RequestID, result.Code); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO deliveries(order_id,request_id,supplier,code) VALUES ($1,$2,$3,$4)`, req.OrderID, req.RequestID, req.Supplier, result.Code); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE orders SET status='delivered',updated_at=now() WHERE id=$1`, req.OrderID); err != nil {

@@ -14,6 +14,7 @@ type Request struct {
 	RequestID string `json:"request_id"`
 	OrderID   string `json:"order_id"`
 	SKU       string `json:"sku"`
+	Supplier  string `json:"-"`
 }
 
 type Result struct {
@@ -42,13 +43,17 @@ type Issuer interface {
 }
 
 type Worker struct {
-	store  Repository
-	issuer Issuer
-	logger *slog.Logger
+	store   Repository
+	issuers map[string]Issuer
+	logger  *slog.Logger
 }
 
 func NewWorker(store Repository, issuer Issuer, logger *slog.Logger) *Worker {
-	return &Worker{store: store, issuer: issuer, logger: logger}
+	return NewWorkerWithSuppliers(store, map[string]Issuer{"A": issuer}, logger)
+}
+
+func NewWorkerWithSuppliers(store Repository, issuers map[string]Issuer, logger *slog.Logger) *Worker {
+	return &Worker{store: store, issuers: issuers, logger: logger}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -87,7 +92,12 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	callCtx, callCancel := context.WithTimeout(ctx, 2*time.Second)
-	result, callErr := w.issuer.Issue(callCtx, req)
+	issuer, ok := w.issuers[req.Supplier]
+	if !ok {
+		callCancel()
+		return true, fmt.Errorf("supplier %q is not configured", req.Supplier)
+	}
+	result, callErr := issuer.Issue(callCtx, req)
 	callCancel()
 	if callErr != nil {
 		// A transport error does not prove absence of a supplier-side commit.
@@ -98,6 +108,6 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	w.logger.Info("delivery attempt recorded", "order_id", req.OrderID, "request_id", req.RequestID,
-		"supplier", "A", "attempt", lease.Attempts, "result", result.Status, "reason", result.Reason)
+		"supplier", req.Supplier, "attempt", lease.Attempts, "result", result.Status, "reason", result.Reason)
 	return true, nil
 }

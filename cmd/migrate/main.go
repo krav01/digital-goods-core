@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	scope := flag.String("scope", "app", "migration scope: app or supplier")
+	scope := flag.String("scope", "app", "migration scope: app, supplier, or supplier-b")
 	flag.Parse()
 	if err := postgres.Migrate(os.Getenv("DATABASE_URL"), *scope); err != nil {
 		slog.Error("migration failed", "error", err)

@@ -100,7 +100,11 @@ func TestProcessHelper(t *testing.T) {
 		if err := gate(ctx); err != nil {
 			return
 		}
-		if err := delivery.NewWorker(store, supplier.NewClient(os.Getenv("DGC_HELPER_SUPPLIER")), logger).Run(ctx); err != nil {
+		issuers := map[string]delivery.Issuer{
+			"A": supplier.NewClient(os.Getenv("DGC_HELPER_SUPPLIER")),
+			"B": supplier.NewClient(os.Getenv("DGC_HELPER_SUPPLIER_B")),
+		}
+		if err := delivery.NewWorkerWithSuppliers(store, issuers, logger).Run(ctx); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -142,7 +146,7 @@ type barrierStore struct {
 
 // This harness regression runs without PostgreSQL, including in a local sandbox.
 func TestProcessHarnessShutdown(t *testing.T) {
-	p := startProcess(t, "idle", "", "", "")
+	p := startProcess(t, "idle", "", "", "", "")
 	p.stop(t)
 }
 
@@ -220,7 +224,7 @@ type childProcess struct {
 	ended  bool
 }
 
-func startProcess(t *testing.T, role, dsn, supplierURL, phase string) *childProcess {
+func startProcess(t *testing.T, role, dsn, supplierURL, supplierBURL, phase string) *childProcess {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -234,7 +238,7 @@ func startProcess(t *testing.T, role, dsn, supplierURL, phase string) *childProc
 		}
 	}
 	p.cmd.Env = append(p.cmd.Env, "DGC_HELPER_ROLE="+role, "DGC_HELPER_DSN="+dsn,
-		"DGC_HELPER_SUPPLIER="+supplierURL, "DGC_HELPER_PHASE="+phase)
+		"DGC_HELPER_SUPPLIER="+supplierURL, "DGC_HELPER_SUPPLIER_B="+supplierBURL, "DGC_HELPER_PHASE="+phase)
 	p.cmd.Stderr = &p.output
 	p.input, err = p.cmd.StdinPipe()
 	if err != nil {

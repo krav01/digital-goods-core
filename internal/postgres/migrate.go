@@ -17,8 +17,8 @@ var migrations embed.FS
 
 // Migrate is explicit administration, never an automatic side effect of API startup.
 func Migrate(databaseURL, scope string) error {
-	if scope != "app" && scope != "supplier" {
-		return errors.New("migration scope must be app or supplier")
+	if scope != "app" && scope != "supplier" && scope != "supplier-b" {
+		return errors.New("migration scope must be app, supplier, or supplier-b")
 	}
 	u, err := url.Parse(databaseURL)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {

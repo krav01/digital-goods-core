@@ -17,6 +17,7 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	DatabaseURL     string
 	SupplierURL     string
+	SupplierBURL    string
 }
 
 func FromEnv() (Config, error) {
@@ -25,6 +26,7 @@ func FromEnv() (Config, error) {
 		ShutdownTimeout: defaultShutdownTimeout,
 		DatabaseURL:     strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		SupplierURL:     envOrDefault("SUPPLIER_URL", "http://127.0.0.1:8081"),
+		SupplierBURL:    envOrDefault("SUPPLIER_B_URL", "http://127.0.0.1:8082"),
 	}
 
 	if rawTimeout := strings.TrimSpace(os.Getenv("SHUTDOWN_TIMEOUT")); rawTimeout != "" {
