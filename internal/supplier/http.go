@@ -124,15 +124,45 @@ func shouldRefuseRandomly(rate int) bool {
 }
 
 type Client struct {
-	url    string
-	client *http.Client
+	url          string
+	inventoryURL string
+	client       *http.Client
 }
 
 func NewClient(url string) *Client {
-	return &Client{url: strings.TrimRight(url, "/") + "/issue", client: &http.Client{
+	baseURL := strings.TrimRight(url, "/")
+	return &Client{url: baseURL + "/issue", inventoryURL: baseURL + "/inventory", client: &http.Client{
 		Timeout:       2 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+}
+
+func (c *Client) Inventory(ctx context.Context) ([]Inventory, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.inventoryURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("supplier inventory: %w", err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			slog.Warn("close supplier inventory response", "error", err)
+		}
+	}()
+	if response.StatusCode != http.StatusOK {
+		return nil, errors.New("supplier inventory is unavailable")
+	}
+	var inventory []Inventory
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
+	if err := decoder.Decode(&inventory); err != nil {
+		return nil, errors.New("invalid supplier inventory response")
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing supplier inventory response data")
+	}
+	return inventory, nil
 }
 
 func (c *Client) Issue(ctx context.Context, input delivery.Request) (delivery.Result, error) {

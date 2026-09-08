@@ -8,11 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/krav01/digital-goods-core/internal/catalog"
 	"github.com/krav01/digital-goods-core/internal/order"
 	"github.com/krav01/digital-goods-core/internal/payment"
+	"github.com/krav01/digital-goods-core/internal/supplier"
 )
 
 type stubStore struct{ readyErr error }
+type catalogStore struct{ stubStore }
 
 func (s stubStore) Ready(context.Context) error { return s.readyErr }
 func (s stubStore) CreateOrder(context.Context, string, string) (order.Order, bool, error) {
@@ -21,7 +24,15 @@ func (s stubStore) CreateOrder(context.Context, string, string) (order.Order, bo
 func (s stubStore) GetOrder(context.Context, string) (order.Order, error) {
 	return order.Order{}, order.ErrNotFound
 }
-func (s stubStore) AcceptPayment(context.Context, payment.Event) error { return nil }
+func (s stubStore) AcceptPayment(context.Context, payment.Event) error      { return nil }
+func (s stubStore) ListProducts(context.Context) ([]catalog.Product, error) { return nil, nil }
+func (catalogStore) ListProducts(context.Context) ([]catalog.Product, error) {
+	return []catalog.Product{{SKU: "SKU"}}, nil
+}
+
+type inventoryFunc func(context.Context) ([]supplier.Inventory, error)
+
+func (f inventoryFunc) Inventory(ctx context.Context) ([]supplier.Inventory, error) { return f(ctx) }
 
 func TestNewHandlerStatusEndpoints(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz"} {
@@ -84,5 +95,25 @@ func TestReadinessFailureDoesNotAffectHealth(t *testing.T) {
 				t.Fatalf("got %d, want %d", w.Code, tc.want)
 			}
 		})
+	}
+}
+
+func TestProductsRequireCompleteInventory(t *testing.T) {
+	good := inventoryFunc(func(context.Context) ([]supplier.Inventory, error) {
+		return []supplier.Inventory{{SKU: "SKU", Available: 2}}, nil
+	})
+	second := inventoryFunc(func(context.Context) ([]supplier.Inventory, error) {
+		return []supplier.Inventory{{SKU: "SKU", Available: 3}}, nil
+	})
+	w := httptest.NewRecorder()
+	NewHandler(catalogStore{}, good, second).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/products", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"available":5`) {
+		t.Fatalf("response = %d %s", w.Code, w.Body.String())
+	}
+	bad := inventoryFunc(func(context.Context) ([]supplier.Inventory, error) { return nil, errors.New("down") })
+	w = httptest.NewRecorder()
+	NewHandler(catalogStore{}, good, bad).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/products", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
 	}
 }

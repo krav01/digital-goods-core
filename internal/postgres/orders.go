@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/krav01/digital-goods-core/internal/catalog"
 	"github.com/krav01/digital-goods-core/internal/order"
 )
 
@@ -57,6 +58,26 @@ func (s *Store) CreateOrder(ctx context.Context, id, sku string) (order.Order, b
 
 func (s *Store) GetOrder(ctx context.Context, id string) (order.Order, error) {
 	return readOrder(ctx, s.pool, id)
+}
+
+func (s *Store) ListProducts(ctx context.Context) ([]catalog.Product, error) {
+	rows, err := s.pool.Query(ctx, "SELECT sku,name,type,price_minor,currency FROM products WHERE active ORDER BY sku")
+	if err != nil {
+		return nil, fmt.Errorf("list products: %w", err)
+	}
+	defer rows.Close()
+	var products []catalog.Product
+	for rows.Next() {
+		var p catalog.Product
+		if err := rows.Scan(&p.SKU, &p.Name, &p.Type, &p.PriceMinor, &p.Currency); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate products: %w", err)
+	}
+	return products, nil
 }
 
 type rowQuerier interface {

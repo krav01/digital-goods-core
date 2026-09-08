@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/krav01/digital-goods-core/internal/catalog"
 	"github.com/krav01/digital-goods-core/internal/httpjson"
 	"github.com/krav01/digital-goods-core/internal/order"
 	"github.com/krav01/digital-goods-core/internal/payment"
@@ -22,11 +23,32 @@ type Store interface {
 	CreateOrder(context.Context, string, string) (order.Order, bool, error)
 	GetOrder(context.Context, string) (order.Order, error)
 	AcceptPayment(context.Context, payment.Event) error
+	ListProducts(context.Context) ([]catalog.Product, error)
 }
 
-func NewHandler(store Store) http.Handler {
+func NewHandler(store Store, inventorySources ...catalog.InventorySource) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", statusHandler)
+	mux.HandleFunc("GET /products", func(w http.ResponseWriter, r *http.Request) {
+		products, err := store.ListProducts(r.Context())
+		if err != nil {
+			respondError(w, err)
+			return
+		}
+		if len(inventorySources) == 0 {
+			httpjson.Error(w, 503, "inventory unavailable")
+			return
+		}
+		available, err := catalog.Available(r.Context(), inventorySources...)
+		if err != nil {
+			httpjson.Error(w, 503, "inventory unavailable")
+			return
+		}
+		for i := range products {
+			products[i].Available = available[products[i].SKU]
+		}
+		httpjson.Write(w, 200, products)
+	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if store == nil || store.Ready(r.Context()) != nil {
 			httpjson.Error(w, 503, "database not ready")
