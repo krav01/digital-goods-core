@@ -17,6 +17,7 @@ Go backend for a digital-goods store: orders, payment webhooks, and one-time del
 
 - [Architecture and guarantee boundaries](docs/architecture.md)
 - [Data model and API](docs/data-model.md)
+- [OpenAPI 3.1 specification](docs/openapi.yaml)
 - [Implementation and acceptance matrix](docs/roadmap.md)
 - [Working rules](AGENTS.md)
 

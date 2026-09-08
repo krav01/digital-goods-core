@@ -1,0 +1,165 @@
+openapi: 3.1.0
+info:
+  title: Digital Goods Core API
+  version: 1.0.0
+  description: REST API for orders, payment events, catalog availability, and health checks.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local Compose demo
+paths:
+  /healthz:
+    get:
+      summary: Check process health
+      responses:
+        '200':
+          description: Process is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+  /readyz:
+    get:
+      summary: Check database readiness
+      responses:
+        '200':
+          description: Database is ready and migrations are current.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /products:
+    get:
+      summary: List catalog products with aggregated supplier availability
+      responses:
+        '200':
+          description: Active catalog products and available stock across A/B.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Product' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /orders:
+    post:
+      summary: Create or read an idempotent order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrderRequest' }
+      responses:
+        '201':
+          description: New order created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '200':
+          description: Existing order returned for the same order ID and SKU.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /orders/{id}:
+    get:
+      summary: Get an order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,100}$' }
+      responses:
+        '200':
+          description: Order found. The code is present only after delivery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /webhooks/payment:
+    post:
+      summary: Accept a payment notification
+      description: A 200 response means durable event acceptance, not successful delivery. Exact replays are accepted; a changed payload with the same event ID conflicts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentEvent' }
+      responses:
+        '200':
+          description: Event durably accepted or exactly replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  responses:
+    InvalidInput:
+      description: JSON is malformed or input violates the contract.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: The order or product does not exist.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: An identifier was reused with different fields.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unavailable:
+      description: A dependency is temporarily unavailable.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Status:
+      type: object
+      required: [status]
+      properties: { status: { type: string, example: ok } }
+    Accepted:
+      type: object
+      required: [status]
+      properties: { status: { type: string, const: accepted } }
+    Error:
+      type: object
+      required: [error]
+      properties: { error: { type: string } }
+    CreateOrderRequest:
+      type: object
+      required: [sku]
+      additionalProperties: false
+      properties:
+        sku: { type: string, pattern: '^[A-Za-z0-9_-]{1,100}$', example: STEAM-TOPUP-500 }
+        order_id: { type: string, pattern: '^[A-Za-z0-9_-]{1,100}$', example: ord_demo_1 }
+    Order:
+      type: object
+      required: [order_id, sku, price_minor, currency, status, created_at]
+      properties:
+        order_id: { type: string }
+        sku: { type: string }
+        price_minor: { type: integer, format: int64, description: Price in kopecks, example: 50000 }
+        currency: { type: string, const: RUB }
+        status: { type: string, enum: [created, paid, delivering, delivered, payment_failed, out_of_stock, delivery_failed] }
+        paid_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        code: { type: string, description: Present only when status is delivered }
+    PaymentEvent:
+      type: object
+      required: [event_id, order_id, status, amount, currency, created_at]
+      additionalProperties: false
+      properties:
+        event_id: { type: string, pattern: '^[A-Za-z0-9_-]{1,100}$', example: evt_demo_1 }
+        order_id: { type: string, pattern: '^[A-Za-z0-9_-]{1,100}$', example: ord_demo_1 }
+        status: { type: string, enum: [paid, failed] }
+        amount: { type: number, description: Positive RUB decimal with at most two fractional digits, example: 500 }
+        currency: { type: string, const: RUB }
+        created_at: { type: string, format: date-time }
+    Product:
+      type: object
+      required: [sku, name, type, price_minor, currency, available]
+      properties:
+        sku: { type: string }
+        name: { type: string }
+        type: { type: string }
+        price_minor: { type: integer, format: int64 }
+        currency: { type: string, const: RUB }
+        available: { type: integer, format: int64, minimum: 0 }
