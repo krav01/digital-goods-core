@@ -290,6 +290,22 @@ func TestConcurrentLastKeyProcesses(t *testing.T) {
 	count(t, f.app, "SELECT count(DISTINCT code) FROM deliveries", 2)
 }
 
+func TestProcessUnknownSupplierResultDoesNotFallback(t *testing.T) {
+	f := processSetup(t)
+	f.supplier.kill(t)
+	t.Setenv("SUPPLIER_AFTER_ISSUE_DELAY", "3s")
+	f.supplier = startProcess(t, "supplier", f.supDSN, "", "", "")
+	f.create(t, "ord_unknown_a")
+	request(t, f.api.url, "POST", "/webhooks/payment", payload("ord_unknown_a", "evt_unknown_a"), nil, 200)
+	w := f.worker(t, "")
+	w.resume(t)
+	awaitCount(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	awaitCount(t, f.app, "SELECT count(*) FROM delivery_operations WHERE supplier='A' AND state='unknown'", 1)
+	w.stop(t)
+	count(t, f.supB, "SELECT count(*) FROM issue_requests", 0)
+	count(t, f.app, "SELECT count(*) FROM deliveries", 0)
+}
+
 func TestProcessCrashRecovery(t *testing.T) {
 	for _, phase := range []string{"after_payment", "after_prepare", "before_finish"} {
 		t.Run(phase, func(t *testing.T) {
