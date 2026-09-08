@@ -140,3 +140,28 @@ func TestHandlerRandomFinalUnavailable(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlerRandomTransientError(t *testing.T) {
+	var issued, refused bool
+	handler := NewHandler(storeFunc{
+		issue: func(context.Context, delivery.Request) (delivery.Result, error) {
+			issued = true
+			return delivery.Result{}, nil
+		},
+		refuse: func(context.Context, delivery.Request) (delivery.Result, error) {
+			refused = true
+			return delivery.Result{}, nil
+		},
+	}, WithRandomTransientError(100))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/issue", strings.NewReader(`{"request_id":"req","order_id":"ord","sku":"sku"}`))
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if issued || refused {
+		t.Fatalf("supplier operation invoked: issue=%v refuse=%v", issued, refused)
+	}
+}

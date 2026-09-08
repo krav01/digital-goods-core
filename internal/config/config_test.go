@@ -10,6 +10,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("SHUTDOWN_TIMEOUT", "12s")
 	t.Setenv("SUPPLIER_AFTER_ISSUE_DELAY", "3s")
 	t.Setenv("SUPPLIER_FINAL_UNAVAILABLE_PERCENT", "25")
+	t.Setenv("SUPPLIER_TRANSIENT_ERROR_PERCENT", "75")
 
 	got, err := FromEnv()
 	if err != nil {
@@ -27,6 +28,9 @@ func TestFromEnv(t *testing.T) {
 	}
 	if got.SupplierFinalUnavailableRate != 25 {
 		t.Errorf("SupplierFinalUnavailableRate = %d, want 25", got.SupplierFinalUnavailableRate)
+	}
+	if got.SupplierTransientErrorRate != 75 {
+		t.Errorf("SupplierTransientErrorRate = %d, want 75", got.SupplierTransientErrorRate)
 	}
 }
 
@@ -50,6 +54,18 @@ func TestFromEnvInvalidSupplierFinalUnavailablePercent(t *testing.T) {
 	for _, value := range []string{"invalid", "-1", "101"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("SUPPLIER_FINAL_UNAVAILABLE_PERCENT", value)
+
+			if _, err := FromEnv(); err == nil {
+				t.Fatal("FromEnv() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestFromEnvInvalidSupplierTransientErrorPercent(t *testing.T) {
+	for _, value := range []string{"invalid", "-1", "101"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SUPPLIER_TRANSIENT_ERROR_PERCENT", value)
 
 			if _, err := FromEnv(); err == nil {
 				t.Fatal("FromEnv() error = nil, want error")
