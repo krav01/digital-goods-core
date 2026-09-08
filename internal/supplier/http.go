@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type HandlerOption func(*handlerOptions)
 type handlerOptions struct {
 	afterIssueDelay       time.Duration
 	forceFinalUnavailable bool
+	randomUnavailableRate int
 }
 
 func WithAfterIssueDelay(delay time.Duration) HandlerOption {
@@ -36,6 +38,10 @@ func WithAfterIssueDelay(delay time.Duration) HandlerOption {
 
 func WithForcedFinalUnavailable() HandlerOption {
 	return func(options *handlerOptions) { options.forceFinalUnavailable = true }
+}
+
+func WithRandomFinalUnavailable(rate int) HandlerOption {
+	return func(options *handlerOptions) { options.randomUnavailableRate = rate }
 }
 
 func NewHandler(store Store, options ...HandlerOption) http.Handler {
@@ -64,7 +70,7 @@ func NewHandler(store Store, options ...HandlerOption) http.Handler {
 		defer cancel()
 		var result delivery.Result
 		var err error
-		if config.forceFinalUnavailable {
+		if config.forceFinalUnavailable || shouldRefuseRandomly(config.randomUnavailableRate) {
 			result, err = store.Refuse(ctx, req)
 		} else {
 			result, err = store.Issue(ctx, req)
@@ -96,6 +102,10 @@ func NewHandler(store Store, options ...HandlerOption) http.Handler {
 		httpjson.Write(w, status, result)
 	})
 	return mux
+}
+
+func shouldRefuseRandomly(rate int) bool {
+	return rate > 0 && rand.IntN(100) < rate
 }
 
 type Client struct {

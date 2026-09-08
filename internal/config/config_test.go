@@ -9,6 +9,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("HTTP_ADDR", ":9090")
 	t.Setenv("SHUTDOWN_TIMEOUT", "12s")
 	t.Setenv("SUPPLIER_AFTER_ISSUE_DELAY", "3s")
+	t.Setenv("SUPPLIER_FINAL_UNAVAILABLE_PERCENT", "25")
 
 	got, err := FromEnv()
 	if err != nil {
@@ -23,6 +24,9 @@ func TestFromEnv(t *testing.T) {
 	}
 	if got.SupplierAfterIssueDelay != 3*time.Second {
 		t.Errorf("SupplierAfterIssueDelay = %s, want %s", got.SupplierAfterIssueDelay, 3*time.Second)
+	}
+	if got.SupplierFinalUnavailableRate != 25 {
+		t.Errorf("SupplierFinalUnavailableRate = %d, want 25", got.SupplierFinalUnavailableRate)
 	}
 }
 
@@ -39,5 +43,17 @@ func TestFromEnvInvalidShutdownTimeout(t *testing.T) {
 
 	if _, err := FromEnv(); err == nil {
 		t.Fatal("FromEnv() error = nil, want error")
+	}
+}
+
+func TestFromEnvInvalidSupplierFinalUnavailablePercent(t *testing.T) {
+	for _, value := range []string{"invalid", "-1", "101"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SUPPLIER_FINAL_UNAVAILABLE_PERCENT", value)
+
+			if _, err := FromEnv(); err == nil {
+				t.Fatal("FromEnv() error = nil, want error")
+			}
+		})
 	}
 }
