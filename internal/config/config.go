@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,11 +14,13 @@ const (
 )
 
 type Config struct {
-	HTTPAddress     string
-	ShutdownTimeout time.Duration
-	DatabaseURL     string
-	SupplierURL     string
-	SupplierBURL    string
+	HTTPAddress                   string
+	ShutdownTimeout               time.Duration
+	DatabaseURL                   string
+	SupplierURL                   string
+	SupplierBURL                  string
+	SupplierAfterIssueDelay       time.Duration
+	SupplierForceFinalUnavailable bool
 }
 
 func FromEnv() (Config, error) {
@@ -38,6 +41,23 @@ func FromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("SHUTDOWN_TIMEOUT must be positive")
 		}
 		config.ShutdownTimeout = timeout
+	}
+	if rawDelay := strings.TrimSpace(os.Getenv("SUPPLIER_AFTER_ISSUE_DELAY")); rawDelay != "" {
+		delay, err := time.ParseDuration(rawDelay)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse SUPPLIER_AFTER_ISSUE_DELAY: %w", err)
+		}
+		if delay < 0 {
+			return Config{}, fmt.Errorf("SUPPLIER_AFTER_ISSUE_DELAY must not be negative")
+		}
+		config.SupplierAfterIssueDelay = delay
+	}
+	if rawUnavailable := strings.TrimSpace(os.Getenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE")); rawUnavailable != "" {
+		forceUnavailable, err := strconv.ParseBool(rawUnavailable)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse SUPPLIER_FORCE_FINAL_UNAVAILABLE: %w", err)
+		}
+		config.SupplierForceFinalUnavailable = forceUnavailable
 	}
 
 	return config, nil

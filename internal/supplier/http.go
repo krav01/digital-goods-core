@@ -19,10 +19,30 @@ import (
 
 type Store interface {
 	Issue(context.Context, delivery.Request) (delivery.Result, error)
+	Refuse(context.Context, delivery.Request) (delivery.Result, error)
 	Ready(context.Context) error
 }
 
-func NewHandler(store Store) http.Handler {
+type HandlerOption func(*handlerOptions)
+
+type handlerOptions struct {
+	afterIssueDelay       time.Duration
+	forceFinalUnavailable bool
+}
+
+func WithAfterIssueDelay(delay time.Duration) HandlerOption {
+	return func(options *handlerOptions) { options.afterIssueDelay = delay }
+}
+
+func WithForcedFinalUnavailable() HandlerOption {
+	return func(options *handlerOptions) { options.forceFinalUnavailable = true }
+}
+
+func NewHandler(store Store, options ...HandlerOption) http.Handler {
+	config := handlerOptions{}
+	for _, option := range options {
+		option(&config)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		httpjson.Write(w, 200, map[string]string{"status": "ok"})
@@ -42,7 +62,13 @@ func NewHandler(store Store) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		result, err := store.Issue(ctx, req)
+		var result delivery.Result
+		var err error
+		if config.forceFinalUnavailable {
+			result, err = store.Refuse(ctx, req)
+		} else {
+			result, err = store.Issue(ctx, req)
+		}
 		if errors.Is(err, order.ErrInvalid) {
 			httpjson.Error(w, 400, "invalid input")
 			return
@@ -55,6 +81,13 @@ func NewHandler(store Store) http.Handler {
 			slog.Error("supplier operation failed", "request_id", req.RequestID, "error", err)
 			httpjson.Error(w, 503, "temporarily unavailable")
 			return
+		}
+		if config.afterIssueDelay > 0 {
+			select {
+			case <-time.After(config.afterIssueDelay):
+			case <-r.Context().Done():
+				return
+			}
 		}
 		status := 200
 		if result.Status == "error" {

@@ -114,7 +114,18 @@ func TestProcessHelper(t *testing.T) {
 	case "api":
 		handler = httpapi.NewHandler(postgres.New(pool))
 	case "supplier":
-		handler = supplier.NewHandler(postgres.NewSupplier(pool))
+		var delay time.Duration
+		if rawDelay := os.Getenv("SUPPLIER_AFTER_ISSUE_DELAY"); rawDelay != "" {
+			delay, err = time.ParseDuration(rawDelay)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		options := []supplier.HandlerOption{supplier.WithAfterIssueDelay(delay)}
+		if os.Getenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE") == "true" {
+			options = append(options, supplier.WithForcedFinalUnavailable())
+		}
+		handler = supplier.NewHandler(postgres.NewSupplier(pool), options...)
 	default:
 		t.Fatalf("unknown helper role %q", role)
 	}
