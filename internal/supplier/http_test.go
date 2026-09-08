@@ -12,8 +12,9 @@ import (
 )
 
 type storeFunc struct {
-	issue  func(context.Context, delivery.Request) (delivery.Result, error)
-	refuse func(context.Context, delivery.Request) (delivery.Result, error)
+	issue     func(context.Context, delivery.Request) (delivery.Result, error)
+	refuse    func(context.Context, delivery.Request) (delivery.Result, error)
+	inventory func(context.Context) ([]Inventory, error)
 }
 
 func (s storeFunc) Issue(ctx context.Context, req delivery.Request) (delivery.Result, error) {
@@ -22,6 +23,13 @@ func (s storeFunc) Issue(ctx context.Context, req delivery.Request) (delivery.Re
 
 func (s storeFunc) Refuse(ctx context.Context, req delivery.Request) (delivery.Result, error) {
 	return s.refuse(ctx, req)
+}
+
+func (s storeFunc) Inventory(ctx context.Context) ([]Inventory, error) {
+	if s.inventory == nil {
+		return nil, nil
+	}
+	return s.inventory(ctx)
 }
 
 func (storeFunc) Ready(context.Context) error { return nil }
@@ -70,6 +78,24 @@ func TestClientIssueCancellation(t *testing.T) {
 	_, err := NewClient("http://127.0.0.1:1").Issue(ctx, delivery.Request{RequestID: "req"})
 	if err == nil {
 		t.Fatal("expected cancellation error")
+	}
+}
+
+func TestHandlerInventory(t *testing.T) {
+	handler := NewHandler(storeFunc{inventory: func(context.Context) ([]Inventory, error) {
+		return []Inventory{{SKU: "SKU_A", Available: 2}, {SKU: "SKU_B", Available: 0}}, nil
+	}})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var inventory []Inventory
+	if err := json.NewDecoder(recorder.Body).Decode(&inventory); err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) != 2 || inventory[0].SKU != "SKU_A" || inventory[0].Available != 2 {
+		t.Fatalf("inventory = %+v", inventory)
 	}
 }
 

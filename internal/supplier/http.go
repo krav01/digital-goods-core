@@ -21,7 +21,13 @@ import (
 type Store interface {
 	Issue(context.Context, delivery.Request) (delivery.Result, error)
 	Refuse(context.Context, delivery.Request) (delivery.Result, error)
+	Inventory(context.Context) ([]Inventory, error)
 	Ready(context.Context) error
+}
+
+type Inventory struct {
+	SKU       string `json:"sku"`
+	Available int64  `json:"available"`
 }
 
 type HandlerOption func(*handlerOptions)
@@ -59,6 +65,15 @@ func NewHandler(store Store, options ...HandlerOption) http.Handler {
 			return
 		}
 		httpjson.Write(w, 200, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /inventory", func(w http.ResponseWriter, r *http.Request) {
+		inventory, err := store.Inventory(r.Context())
+		if err != nil {
+			slog.Error("read supplier inventory", "error", err)
+			httpjson.Error(w, 503, "temporarily unavailable")
+			return
+		}
+		httpjson.Write(w, 200, inventory)
 	})
 	mux.HandleFunc("POST /issue", func(w http.ResponseWriter, r *http.Request) {
 		var req delivery.Request
