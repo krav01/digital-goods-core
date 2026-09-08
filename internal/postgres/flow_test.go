@@ -499,3 +499,40 @@ func TestOutOfStockRestoresAfterRestock(t *testing.T) {
 	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
 	count(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='refused'", 1)
 }
+
+func TestReconciliationReportsControlledAnomalies(t *testing.T) {
+	f := setup(t)
+	if err := f.store.AcceptPayment(t.Context(), event("evt_waiting", "ord_missing")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ProcessPayment(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AcceptPayment(t.Context(), event("evt_conflict", "ord_conflict")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Exec(t.Context(), "UPDATE payment_events SET processing_state='conflict' WHERE event_id='evt_conflict'"); err != nil {
+		t.Fatal(err)
+	}
+	paid(t, f, "ord_reconcile")
+	if _, err := f.app.Exec(t.Context(), "UPDATE delivery_jobs SET state='leased',leased_until=now()-interval '1 second' WHERE order_id='ord_reconcile'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.app.Exec(t.Context(), `INSERT INTO delivery_operations(request_id,order_id,supplier,generation,sku,state)
+		VALUES ('req_reconcile','ord_reconcile','A',1,'STEAM-TOPUP-500','unknown')`); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := f.store.Reconcile(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.PendingPaymentEvents != 1 || report.PaymentConflicts != 1 || report.PaidWithoutDelivery != 1 ||
+		report.ExpiredLeases != 1 || report.UnknownOperations != 1 || report.DeliveryWithoutPaid != 0 {
+		t.Fatalf("unexpected reconciliation report: %+v", report)
+	}
+	count(t, f.app, "SELECT count(*) FROM payment_events WHERE processing_state='waiting_order'", 1)
+	count(t, f.app, "SELECT count(*) FROM payment_events WHERE processing_state='conflict'", 1)
+	count(t, f.app, "SELECT count(*) FROM delivery_jobs WHERE state='leased'", 1)
+	count(t, f.app, "SELECT count(*) FROM delivery_operations WHERE state='unknown'", 1)
+}
