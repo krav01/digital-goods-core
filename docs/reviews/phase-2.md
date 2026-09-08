@@ -42,6 +42,13 @@ against supplier issuance and inventory records, not only counted locally.
 
 ## Limits and gate
 
+The first CI run exposed a harness cleanup deadlock: cancelling the child did
+not release its blocking inherited-stdin read, so shutdown waited for the reader
+while the parent's pipe writer remained open. A database-free regression test
+reproduced the forced cleanup locally. The parent now closes its command writer
+after SIGTERM, allowing EOF and the reader join; this fixes test infrastructure,
+not the production transaction protocol.
+
 - Supplier B and cross-supplier effect counts remain phase 3; B does not exist yet.
 - This is not a database-server/power-loss test. PostgreSQL durability is assumed;
   application and supplier processes, not PostgreSQL servers, are killed.

@@ -81,6 +81,11 @@ func TestProcessHelper(t *testing.T) {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
+	if role == "idle" {
+		emit(processEvent{Name: "ready"})
+		<-ctx.Done()
+		return
+	}
 	pool, err := postgres.Open(ctx, os.Getenv("DGC_HELPER_DSN"))
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +138,12 @@ type barrierStore struct {
 	emit    func(processEvent)
 	paused  bool
 	claimed bool
+}
+
+// This harness regression runs without PostgreSQL, including in a local sandbox.
+func TestProcessHarnessShutdown(t *testing.T) {
+	p := startProcess(t, "idle", "", "", "")
+	p.stop(t)
 }
 
 func (s *barrierStore) checkpoint(ctx context.Context, phase string) error {
@@ -328,6 +339,11 @@ func (p *childProcess) stop(t *testing.T) {
 	default:
 	}
 	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Error(err)
+	}
+	// SIGTERM cancels work but cannot unblock every inherited-stdin Read on Unix.
+	// The parent owns the writer: EOF lets the child join its command reader.
+	if err := p.input.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		t.Error(err)
 	}
 	select {
