@@ -22,5 +22,5 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	return process.Serve(ctx, cfg, supplier.NewHandler(postgres.NewSupplier(pool)), logger)
+	return process.Serve(ctx, cfg, supplier.NewHandler(postgres.NewSupplier(pool), supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay)), logger)
 }
