@@ -22,7 +22,7 @@ Go-бэкенд магазина цифровых товаров: заказы, 
 
 ## Quick start
 
-Requires Docker with Compose v2. The demo uses PostgreSQL 18.6, applies migrations, and starts API, worker and supplier A. Published ports are loopback-only; the credentials in Compose are disposable development credentials, not production secrets.
+Requires Docker with Compose v2. The demo uses PostgreSQL 18.6, applies migrations, and starts API, worker, and independent suppliers A/B. Published ports are loopback-only; the credentials in Compose are disposable development credentials, not production secrets.
 
 ```sh
 docker compose up -d --build
@@ -60,7 +60,9 @@ make build
 # Run each in a separate terminal when the corresponding Compose process is stopped:
 DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' ./bin/api
 HTTP_ADDR=127.0.0.1:8081 DATABASE_URL='postgres://supplier:supplier-dev-only@127.0.0.1:5433/supplier_a?sslmode=disable' ./bin/supplier
-SUPPLIER_URL=http://127.0.0.1:8081 DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' ./bin/worker
+DATABASE_URL='postgres://supplier:supplier-dev-only@127.0.0.1:5434/supplier_b?sslmode=disable' ./bin/migrate -scope supplier-b
+HTTP_ADDR=127.0.0.1:8082 DATABASE_URL='postgres://supplier:supplier-dev-only@127.0.0.1:5434/supplier_b?sslmode=disable' ./bin/supplier
+SUPPLIER_URL=http://127.0.0.1:8081 SUPPLIER_B_URL=http://127.0.0.1:8082 DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' ./bin/worker
 ```
 
 Configuration:
@@ -71,6 +73,7 @@ Configuration:
 | `SHUTDOWN_TIMEOUT` | `5s` | Предельное время корректного завершения |
 | `DATABASE_URL` | required | Application or supplier PostgreSQL DSN, depending on the process |
 | `SUPPLIER_URL` | `http://127.0.0.1:8081` | Worker-to-supplier HTTP endpoint |
+| `SUPPLIER_B_URL` | `http://127.0.0.1:8082` | Worker-to-supplier B HTTP endpoint |
 
 ## Checks
 
@@ -94,7 +97,7 @@ CI also builds and starts Compose from a clean checkout and runs the smoke scrip
 
 Payment application and job creation share a transaction. Workers claim jobs with `SKIP LOCKED`, a 15-second lease and fencing version. Supplier requests are persisted before HTTP I/O; HTTP calls never hold application transactions open. An ambiguous result retries the same request ID against A, with persisted exponential backoff from 1 to 32 seconds. A durable refusal permits a fresh attempt after restock. Both `out_of_stock` and `delivery_failed` are recoverable.
 
-The mock supplier saves issuance and stock consumption atomically and replays both success and final refusal for a request ID across restarts. A timeout does not authorize fallback. This contract must be supported by any real supplier before claiming equivalent guarantees. Inventory admin tools, reconciliation, authentication, rate limiting, production secrets and multi-supplier fault controls are not implemented.
+Each mock supplier has independent durable storage and an independent key pool. The mock saves issuance and stock consumption atomically and replays both success and final refusal for a request ID across restarts. A durable refusal from A can select B; a timeout does not authorize fallback. This contract must be supported by any real supplier before claiming equivalent guarantees. Inventory admin tools, reconciliation, authentication, rate limiting, production secrets and multi-supplier fault controls are not implemented.
 
 Исходное [тестовое задание](https://docs.google.com/document/d/11ouRyL-sjW5110I6iRgPG_7WkPaJvUjTZjAE5Ta_OOo/edit) требует backend без фронтенда, настоящего эквайринга и реальных поставщиков. Подпись вебхука по условиям не проверяется; это учебное упрощение, а не готовая схема публичного production-сервиса.
 

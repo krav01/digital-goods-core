@@ -125,7 +125,7 @@ func setup(t *testing.T) *fixture {
 	t.Helper()
 	app, _ := database(t, "app")
 	sup, _ := database(t, "supplier")
-	supB, _ := database(t, "supplier_b")
+	supB, _ := database(t, "supplier-b")
 	f := &fixture{app: app, sup: sup, supB: supB, store: postgres.New(app), issuer: postgres.NewSupplier(sup), issuerB: postgres.NewSupplier(supB)}
 	srv := httptest.NewServer(supplier.NewHandler(f.issuer))
 	t.Cleanup(srv.Close)
