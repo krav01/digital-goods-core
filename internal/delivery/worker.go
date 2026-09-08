@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 )
 
@@ -46,6 +47,7 @@ type Worker struct {
 	store   Repository
 	issuers map[string]Issuer
 	logger  *slog.Logger
+	intn    func(int) int
 }
 
 func NewWorker(store Repository, issuer Issuer, logger *slog.Logger) *Worker {
@@ -53,7 +55,7 @@ func NewWorker(store Repository, issuer Issuer, logger *slog.Logger) *Worker {
 }
 
 func NewWorkerWithSuppliers(store Repository, issuers map[string]Issuer, logger *slog.Logger) *Worker {
-	return &Worker{store: store, issuers: issuers, logger: logger}
+	return &Worker{store: store, issuers: issuers, logger: logger, intn: rand.IntN}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -103,11 +105,17 @@ func (w *Worker) Step(ctx context.Context) (bool, error) {
 		// A transport error does not prove absence of a supplier-side commit.
 		result = Result{Status: "unknown", RequestID: req.RequestID, Reason: "supplier_result_unknown"}
 	}
-	delay := time.Second * time.Duration(1<<min(lease.Attempts-1, 5))
+	delay := retryDelay(lease.Attempts, w.intn)
 	if err := w.store.FinishDelivery(ctx, lease, req, result, delay); err != nil {
 		return true, err
 	}
 	w.logger.Info("delivery attempt recorded", "order_id", req.OrderID, "request_id", req.RequestID,
 		"supplier", req.Supplier, "attempt", lease.Attempts, "result", result.Status, "reason", result.Reason)
 	return true, nil
+}
+
+func retryDelay(attempt int, intn func(int) int) time.Duration {
+	base := time.Second * time.Duration(1<<min(max(attempt-1, 0), 5))
+	half := base / 2
+	return half + time.Duration(intn(int(half.Milliseconds())+1))*time.Millisecond
 }
