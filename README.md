@@ -1,24 +1,25 @@
 # Digital Goods Core
 
-Go-бэкенд магазина цифровых товаров: заказы, платёжные вебхуки и однократная выдача товара при повторах, гонках и сбоях поставщиков.
+Go backend for a digital-goods store: orders, payment webhooks, and one-time delivery across retries, races, and supplier failures.
 
-**Статус:** реализованы все этапы ТЗ: durable inbox платежей, очередь выдачи PostgreSQL, независимые поставщики A/B, exactly-once под процессными гонками, сверка и каталог. Полный набор (`check`, `compose`, `integration`) прошёл в [CI PR #15](https://github.com/krav01/digital-goods-core/pull/15).
+**Status:** all assignment phases are implemented: a durable payment inbox, a PostgreSQL delivery queue, independent A/B suppliers, exactly-once behavior under process races, reconciliation, and catalog support. The complete `check`, `compose`, and `integration` suite passed in [CI PR #15](https://github.com/krav01/digital-goods-core/pull/15).
 
-## Принятые решения
+## Key decisions
 
-- Модульный монолит на Go, зависимости через обычные конструкторы; без DI-фреймворка.
-- PostgreSQL — источник истины для заказов, входящих событий и надёжных фоновых задач.
-- `net/http`, `pgx/v5`, `log/slog`, `golang-migrate`; версии закреплены в `go.mod` и `go.sum`.
-- API и worker запускаются отдельными процессами из одного модуля. Заглушки A/B доступны по HTTP с независимыми БД.
-- Доставка сообщений и выполнение задач допускают повторы. Однократность бизнес-эффекта обеспечивается транзакциями и идемпотентностью поставщика.
-- После неопределённого результата A переключение на B запрещено. Исчерпание повторов не доказывает отсутствие выдачи.
+- Go modular monolith with ordinary constructor-based dependencies and no DI framework.
+- PostgreSQL is the source of truth for orders, inbound events, and reliable background jobs.
+- `net/http`, `pgx/v5`, `log/slog`, and `golang-migrate`; versions are pinned in `go.mod` and `go.sum`.
+- The API and worker run as separate processes from one module. A/B mocks are exposed over HTTP with independent databases.
+- Message delivery and job execution may be retried. Transactions and supplier idempotency guarantee the single business effect.
+- An unknown result from A never permits fallback to B. Exhausted retries do not prove that delivery did not occur.
 
-## Документация
+## Documentation
 
-- [Архитектура и границы гарантий](docs/architecture.md)
-- [Модель данных и API](docs/data-model.md)
-- [Этапы и матрица приёмки](docs/roadmap.md)
-- [Правила работы](AGENTS.md)
+- [Architecture and guarantee boundaries](docs/architecture.md)
+- [Data model and API](docs/data-model.md)
+- [OpenAPI 3.1 specification](docs/openapi.yaml)
+- [Implementation and acceptance matrix](docs/roadmap.md)
+- [Working rules](AGENTS.md)
 
 ## Quick start
 
@@ -79,10 +80,10 @@ The fixture inserts exactly 10,000 deterministic active `FIXTURE-SKU-*` rows wit
 
 Configuration:
 
-| Переменная | По умолчанию | Назначение |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `HTTP_ADDR` | `:8080` | Адрес HTTP-сервера |
-| `SHUTDOWN_TIMEOUT` | `5s` | Предельное время корректного завершения |
+| `HTTP_ADDR` | `:8080` | HTTP server address |
+| `SHUTDOWN_TIMEOUT` | `5s` | Maximum graceful-shutdown duration |
 | `DATABASE_URL` | required | Application or supplier PostgreSQL DSN, depending on the process |
 | `SUPPLIER_URL` | `http://127.0.0.1:8081` | Worker-to-supplier HTTP endpoint |
 | `SUPPLIER_B_URL` | `http://127.0.0.1:8082` | Worker-to-supplier B HTTP endpoint |
@@ -129,8 +130,8 @@ Payment application and job creation share a transaction. Workers claim jobs wit
 
 Each mock supplier has independent durable storage and an independent key pool. The mock saves issuance and stock consumption atomically and replays both success and final refusal for a request ID across restarts. A durable refusal from A can select B; a timeout does not authorize fallback. For deterministic fault scenarios use `SUPPLIER_AFTER_ISSUE_DELAY` or `SUPPLIER_FORCE_FINAL_UNAVAILABLE`; `SUPPLIER_FINAL_UNAVAILABLE_PERCENT` (0–100) samples durable final refusals before issue. `SUPPLIER_TRANSIENT_ERROR_PERCENT` (0–100) returns a non-final 503 before a supplier operation; the worker retries the same request ID against A and must not fall back to B. Set either variable independently for supplier A or B. This contract must be supported by any real supplier before claiming equivalent guarantees. Inventory admin tools, automatic reconciliation repair, authentication, rate limiting and production secrets are not implemented.
 
-Исходное [тестовое задание](https://docs.google.com/document/d/11ouRyL-sjW5110I6iRgPG_7WkPaJvUjTZjAE5Ta_OOo/edit) требует backend без фронтенда, настоящего эквайринга и реальных поставщиков. Подпись вебхука по условиям не проверяется; это учебное упрощение, а не готовая схема публичного production-сервиса.
+The original [assignment](https://docs.google.com/document/d/11ouRyL-sjW5110I6iRgPG_7WkPaJvUjTZjAE5Ta_OOo/edit) requires a backend only, with no live payment acquirer or real suppliers. Webhook signature verification is explicitly out of scope; this is an educational simplification, not a production public-service design.
 
-## Учёт времени
+## Time tracking
 
-Начало работ над репозиторием: 2026-09-07. Фактическое время будет записываться по завершённым рабочим блокам; оценки и паузы между сессиями не выдаются за время разработки.
+Repository work started on 2026-09-07. Actual time is recorded only for completed work blocks; estimates and gaps between sessions are not presented as development time.
