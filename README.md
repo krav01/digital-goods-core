@@ -63,7 +63,10 @@ HTTP_ADDR=127.0.0.1:8081 DATABASE_URL='postgres://supplier:supplier-dev-only@127
 DATABASE_URL='postgres://supplier:supplier-dev-only@127.0.0.1:5434/supplier_b?sslmode=disable' ./bin/migrate -scope supplier-b
 HTTP_ADDR=127.0.0.1:8082 DATABASE_URL='postgres://supplier:supplier-dev-only@127.0.0.1:5434/supplier_b?sslmode=disable' ./bin/supplier
 SUPPLIER_URL=http://127.0.0.1:8081 SUPPLIER_B_URL=http://127.0.0.1:8082 DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' ./bin/worker
+DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' ./bin/reconcile
 ```
+
+`reconcile` is read-only. It writes one structured report with counts of pending/conflicting payment events, paid orders without delivery, impossible delivery-without-payment rows, expired delivery leases, and unknown supplier operations; it never repairs data automatically.
 
 Configuration:
 
