@@ -3,11 +3,13 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/krav01/digital-goods-core/internal/delivery"
 	"github.com/krav01/digital-goods-core/internal/order"
+	"github.com/krav01/digital-goods-core/internal/supplier"
 )
 
 type SupplierStore struct{ pool *pgxpool.Pool }
@@ -21,6 +23,27 @@ func (s *SupplierStore) Issue(ctx context.Context, req delivery.Request) (delive
 
 func (s *SupplierStore) Refuse(ctx context.Context, req delivery.Request) (delivery.Result, error) {
 	return s.issue(ctx, req, true)
+}
+
+func (s *SupplierStore) Inventory(ctx context.Context) ([]supplier.Inventory, error) {
+	rows, err := s.pool.Query(ctx, `SELECT sku,count(*) FROM inventory_keys
+		WHERE issued_request_id IS NULL GROUP BY sku ORDER BY sku`)
+	if err != nil {
+		return nil, fmt.Errorf("query supplier inventory: %w", err)
+	}
+	defer rows.Close()
+	var inventory []supplier.Inventory
+	for rows.Next() {
+		var item supplier.Inventory
+		if err := rows.Scan(&item.SKU, &item.Available); err != nil {
+			return nil, err
+		}
+		inventory = append(inventory, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate supplier inventory: %w", err)
+	}
+	return inventory, nil
 }
 
 func (s *SupplierStore) issue(ctx context.Context, req delivery.Request, forceUnavailable bool) (delivery.Result, error) {
