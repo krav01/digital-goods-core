@@ -306,6 +306,38 @@ func TestProcessUnknownSupplierResultDoesNotFallback(t *testing.T) {
 	count(t, f.app, "SELECT count(*) FROM deliveries", 0)
 }
 
+func TestProcessFallbackSurvivesSupplierAFaultModeChange(t *testing.T) {
+	f := processSetup(t)
+	f.supplier.kill(t)
+	t.Setenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE", "true")
+	f.supplier = startProcess(t, "supplier", f.supDSN, "", "", "")
+	f.create(t, "ord_fallback")
+	request(t, f.api.url, "POST", "/webhooks/payment", payload("ord_fallback", "evt_fallback"), nil, 200)
+	w := f.worker(t, "")
+	w.resume(t)
+	awaitCount(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	w.stop(t)
+	var requestID, sku string
+	if err := f.app.QueryRow(t.Context(), "SELECT request_id,sku FROM delivery_operations WHERE order_id=$1 AND supplier='A'", "ord_fallback").Scan(&requestID, &sku); err != nil {
+		t.Fatal(err)
+	}
+	f.supplier.kill(t)
+	t.Setenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE", "")
+	f.supplier = startProcess(t, "supplier", f.supDSN, "", "", "")
+	var replay delivery.Result
+	data, err := post(t.Context(), f.supplier.url+"/issue", delivery.Request{RequestID: requestID, OrderID: "ord_fallback", SKU: sku}, 409)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &replay); err != nil {
+		t.Fatal(err)
+	}
+	if replay.Status != "error" || !replay.Final || replay.Reason != "unavailable" {
+		t.Fatalf("A replay = %+v, want final unavailable", replay)
+	}
+	count(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+}
+
 func TestProcessCrashRecovery(t *testing.T) {
 	for _, phase := range []string{"after_payment", "after_prepare", "before_finish"} {
 		t.Run(phase, func(t *testing.T) {

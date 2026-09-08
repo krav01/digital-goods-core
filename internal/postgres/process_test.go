@@ -121,7 +121,11 @@ func TestProcessHelper(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		handler = supplier.NewHandler(postgres.NewSupplier(pool), supplier.WithAfterIssueDelay(delay))
+		options := []supplier.HandlerOption{supplier.WithAfterIssueDelay(delay)}
+		if os.Getenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE") == "true" {
+			options = append(options, supplier.WithForcedFinalUnavailable())
+		}
+		handler = supplier.NewHandler(postgres.NewSupplier(pool), options...)
 	default:
 		t.Fatalf("unknown helper role %q", role)
 	}

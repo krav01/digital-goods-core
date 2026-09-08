@@ -22,5 +22,9 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	return process.Serve(ctx, cfg, supplier.NewHandler(postgres.NewSupplier(pool), supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay)), logger)
+	options := []supplier.HandlerOption{supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay)}
+	if cfg.SupplierForceFinalUnavailable {
+		options = append(options, supplier.WithForcedFinalUnavailable())
+	}
+	return process.Serve(ctx, cfg, supplier.NewHandler(postgres.NewSupplier(pool), options...), logger)
 }

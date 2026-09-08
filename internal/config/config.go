@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,12 +14,13 @@ const (
 )
 
 type Config struct {
-	HTTPAddress             string
-	ShutdownTimeout         time.Duration
-	DatabaseURL             string
-	SupplierURL             string
-	SupplierBURL            string
-	SupplierAfterIssueDelay time.Duration
+	HTTPAddress                   string
+	ShutdownTimeout               time.Duration
+	DatabaseURL                   string
+	SupplierURL                   string
+	SupplierBURL                  string
+	SupplierAfterIssueDelay       time.Duration
+	SupplierForceFinalUnavailable bool
 }
 
 func FromEnv() (Config, error) {
@@ -49,6 +51,13 @@ func FromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("SUPPLIER_AFTER_ISSUE_DELAY must not be negative")
 		}
 		config.SupplierAfterIssueDelay = delay
+	}
+	if rawUnavailable := strings.TrimSpace(os.Getenv("SUPPLIER_FORCE_FINAL_UNAVAILABLE")); rawUnavailable != "" {
+		forceUnavailable, err := strconv.ParseBool(rawUnavailable)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse SUPPLIER_FORCE_FINAL_UNAVAILABLE: %w", err)
+		}
+		config.SupplierForceFinalUnavailable = forceUnavailable
 	}
 
 	return config, nil

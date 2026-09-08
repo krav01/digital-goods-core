@@ -19,17 +19,23 @@ import (
 
 type Store interface {
 	Issue(context.Context, delivery.Request) (delivery.Result, error)
+	Refuse(context.Context, delivery.Request) (delivery.Result, error)
 	Ready(context.Context) error
 }
 
 type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
-	afterIssueDelay time.Duration
+	afterIssueDelay       time.Duration
+	forceFinalUnavailable bool
 }
 
 func WithAfterIssueDelay(delay time.Duration) HandlerOption {
 	return func(options *handlerOptions) { options.afterIssueDelay = delay }
+}
+
+func WithForcedFinalUnavailable() HandlerOption {
+	return func(options *handlerOptions) { options.forceFinalUnavailable = true }
 }
 
 func NewHandler(store Store, options ...HandlerOption) http.Handler {
@@ -56,7 +62,13 @@ func NewHandler(store Store, options ...HandlerOption) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		result, err := store.Issue(ctx, req)
+		var result delivery.Result
+		var err error
+		if config.forceFinalUnavailable {
+			result, err = store.Refuse(ctx, req)
+		} else {
+			result, err = store.Issue(ctx, req)
+		}
 		if errors.Is(err, order.ErrInvalid) {
 			httpjson.Error(w, 400, "invalid input")
 			return

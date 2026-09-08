@@ -16,6 +16,14 @@ func NewSupplier(pool *pgxpool.Pool) *SupplierStore      { return &SupplierStore
 func (s *SupplierStore) Ready(ctx context.Context) error { return Ready(ctx, s.pool) }
 
 func (s *SupplierStore) Issue(ctx context.Context, req delivery.Request) (delivery.Result, error) {
+	return s.issue(ctx, req, false)
+}
+
+func (s *SupplierStore) Refuse(ctx context.Context, req delivery.Request) (delivery.Result, error) {
+	return s.issue(ctx, req, true)
+}
+
+func (s *SupplierStore) issue(ctx context.Context, req delivery.Request, forceUnavailable bool) (delivery.Result, error) {
 	if !order.ValidID(req.RequestID) || !order.ValidID(req.OrderID) || !order.ValidID(req.SKU) {
 		return delivery.Result{}, order.ErrInvalid
 	}
@@ -53,6 +61,11 @@ func (s *SupplierStore) Issue(ctx context.Context, req delivery.Request) (delive
 		}
 		if alreadyIssued {
 			return order.ErrConflict
+		}
+		if forceUnavailable {
+			result.Status, result.Final, result.Reason = "error", true, "unavailable"
+			_, err = tx.Exec(ctx, `UPDATE issue_requests SET outcome='refused',reason='unavailable' WHERE request_id=$1`, req.RequestID)
+			return err
 		}
 		err = tx.QueryRow(ctx, `SELECT code FROM inventory_keys WHERE sku=$1 AND issued_request_id IS NULL
 			ORDER BY code LIMIT 1 FOR UPDATE SKIP LOCKED`, req.SKU).Scan(&result.Code)
