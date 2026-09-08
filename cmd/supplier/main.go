@@ -5,9 +5,9 @@ import (
 	"log/slog"
 
 	"github.com/krav01/digital-goods-core/internal/config"
-	"github.com/krav01/digital-goods-core/internal/httpapi"
 	"github.com/krav01/digital-goods-core/internal/postgres"
 	"github.com/krav01/digital-goods-core/internal/process"
+	"github.com/krav01/digital-goods-core/internal/supplier"
 )
 
 func main() { process.Main(run) }
@@ -22,5 +22,5 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	return process.Serve(ctx, cfg, httpapi.NewHandler(postgres.New(pool)), logger)
+	return process.Serve(ctx, cfg, supplier.NewHandler(postgres.NewSupplier(pool)), logger)
 }
