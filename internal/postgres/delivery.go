@@ -65,7 +65,7 @@ func (s *Store) PrepareDelivery(ctx context.Context, lease delivery.Lease) (deli
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if errors.Is(err, pgx.ErrNoRows) || (state == "refused" && req.Supplier == "A") {
+		if errors.Is(err, pgx.ErrNoRows) || state == "refused" {
 			// New IDs are allowed only for a first attempt or after a durable refusal.
 			req.RequestID, err = order.NewID("req")
 			if err != nil {

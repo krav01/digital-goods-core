@@ -22,10 +22,10 @@ import (
 )
 
 type processFixture struct {
-	app, sup       *pgxpool.Pool
-	appDSN, supDSN string
-	store          *postgres.Store
-	api, supplier  *childProcess
+	app, sup, supB           *pgxpool.Pool
+	appDSN, supDSN, supBDSN  string
+	store                    *postgres.Store
+	api, supplier, supplierB *childProcess
 }
 
 func processSetup(t *testing.T) *processFixture {
@@ -33,15 +33,17 @@ func processSetup(t *testing.T) *processFixture {
 	f := new(processFixture)
 	f.app, f.appDSN = database(t, "app")
 	f.sup, f.supDSN = database(t, "supplier")
+	f.supB, f.supBDSN = database(t, "supplier-b")
 	f.store = postgres.New(f.app)
-	f.supplier = startProcess(t, "supplier", f.supDSN, "", "")
-	f.api = startProcess(t, "api", f.appDSN, "", "")
+	f.supplier = startProcess(t, "supplier", f.supDSN, "", "", "")
+	f.supplierB = startProcess(t, "supplier", f.supBDSN, "", "", "")
+	f.api = startProcess(t, "api", f.appDSN, "", "", "")
 	return f
 }
 
 func (f *processFixture) worker(t *testing.T, phase string) *childProcess {
 	t.Helper()
-	return startProcess(t, "worker", f.appDSN, f.supplier.url, phase)
+	return startProcess(t, "worker", f.appDSN, f.supplier.url, f.supplierB.url, phase)
 }
 
 func (f *processFixture) create(t *testing.T, id string) {
@@ -254,6 +256,7 @@ func TestConcurrentLastKeyProcesses(t *testing.T) {
 	f := processSetup(t)
 	sqlExec(t, f.sup, `DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'
 		AND code<>(SELECT min(code) FROM inventory_keys WHERE sku='STEAM-TOPUP-500')`)
+	sqlExec(t, f.supB, "DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'")
 	for _, id := range []string{"ord_one", "ord_two"} {
 		f.create(t, id)
 		request(t, f.api.url, "POST", "/webhooks/payment", payload(id, "evt_"+id), nil, 200)
@@ -310,7 +313,7 @@ func TestProcessCrashRecovery(t *testing.T) {
 			w.kill(t)
 			if phase == "before_finish" {
 				f.supplier.kill(t)
-				f.supplier = startProcess(t, "supplier", f.supDSN, "", "")
+				f.supplier = startProcess(t, "supplier", f.supDSN, "", "", "")
 				// Accelerate only this scenario; after_prepare below uses the real 15s lease.
 				sqlExec(t, f.app, "UPDATE delivery_jobs SET leased_until=now()-interval '1 second' WHERE state='leased'")
 			}
@@ -348,7 +351,7 @@ func TestProcessAPICrashAfterAcceptance(t *testing.T) {
 	request(t, f.api.url, "POST", "/webhooks/payment", payload("ord_api", "evt_api"), nil, 200)
 	f.api.kill(t)
 	count(t, f.app, "SELECT count(*) FROM payment_events WHERE processing_state='pending'", 1)
-	f.api = startProcess(t, "api", f.appDSN, "", "")
+	f.api = startProcess(t, "api", f.appDSN, "", "", "")
 	var o order.Order
 	request(t, f.api.url, "GET", "/orders/ord_api", nil, &o, 200)
 	if o.Status != "created" {

@@ -245,6 +245,43 @@ func TestHTTPOrderPaymentDelivery(t *testing.T) {
 	request(t, f.api.URL, "POST", "/webhooks/payment", payload, nil, 409)
 }
 
+func TestSupplierInventoriesAreDisjoint(t *testing.T) {
+	f := setup(t)
+	rows, err := f.sup.Query(t.Context(), "SELECT code FROM inventory_keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	aCodes := make(map[string]struct{})
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		aCodes[code] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = f.supB.Query(t.Context(), "SELECT code FROM inventory_keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := aCodes[code]; exists {
+			t.Fatalf("supplier inventories overlap on code %q", code)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeliveryFallsBackToSupplierBAfterDurableARefusal(t *testing.T) {
 	f := setup(t)
 	if _, err := f.sup.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku=$1", "STEAM-TOPUP-500"); err != nil {
@@ -434,7 +471,14 @@ func TestOutOfStockRestoresAfterRestock(t *testing.T) {
 	if _, err := f.sup.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.supB.Exec(t.Context(), "DELETE FROM inventory_keys WHERE sku='STEAM-TOPUP-500'"); err != nil {
+		t.Fatal(err)
+	}
 	paid(t, f, "ord_empty")
+	step(t, f)
+	if _, err := f.app.Exec(t.Context(), "UPDATE delivery_jobs SET available_at=now()"); err != nil {
+		t.Fatal(err)
+	}
 	step(t, f)
 	o, err := f.store.GetOrder(t.Context(), "ord_empty")
 	if err != nil || o.Status != "out_of_stock" {
@@ -451,6 +495,7 @@ func TestOutOfStockRestoresAfterRestock(t *testing.T) {
 	if err != nil || o.Code != "TEST-RESTOCK" || o.Status != "delivered" {
 		t.Fatalf("%+v %v", o, err)
 	}
-	count(t, f.app, "SELECT count(*) FROM delivery_operations", 2)
+	count(t, f.app, "SELECT count(*) FROM delivery_operations", 3)
 	count(t, f.sup, "SELECT count(*) FROM issue_requests WHERE outcome='issued'", 1)
+	count(t, f.supB, "SELECT count(*) FROM issue_requests WHERE outcome='refused'", 1)
 }
