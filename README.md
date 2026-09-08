@@ -68,6 +68,15 @@ DATABASE_URL='postgres://app:app-dev-only@127.0.0.1:5432/goods?sslmode=disable' 
 
 `reconcile` is read-only. It writes one structured report with counts of pending/conflicting payment events, paid orders without delivery, impossible delivery-without-payment rows, expired delivery leases, and unknown supplier operations; it never repairs data automatically.
 
+For the phase-5 catalog fixture, use only a disposable application database:
+
+```sh
+psql "$DATABASE_URL" -f scripts/catalog-fixture.sql
+psql "$DATABASE_URL" -f scripts/catalog-explain.sql
+```
+
+The fixture inserts exactly 10,000 deterministic active `FIXTURE-SKU-*` rows without changing the base catalog. Save the emitted plan with the PostgreSQL version and database settings; it is an observation, not a portable latency claim.
+
 Configuration:
 
 | Переменная | По умолчанию | Назначение |
