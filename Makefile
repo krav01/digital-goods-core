@@ -1,4 +1,4 @@
-.PHONY: build check fmt-check run test vet race integration
+.PHONY: build check fmt-check run test vet race integration reliability
 
 build:
 	go build -o bin/ ./cmd/...
@@ -23,3 +23,7 @@ race:
 integration:
 	test -n "$$TEST_DATABASE_URL"
 	go test -race -tags=integration -shuffle=on -count=1 -timeout=180s ./internal/postgres
+
+reliability:
+	test -n "$$TEST_DATABASE_URL"
+	go test -race -tags=integration -shuffle=on -count=3 -timeout=300s -v -run 'TestConcurrent|TestProcess(Crash|Stale|API)' ./internal/postgres

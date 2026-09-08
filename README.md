@@ -2,7 +2,7 @@
 
 Go-бэкенд магазина цифровых товаров: заказы, платёжные вебхуки и однократная выдача товара при повторах, гонках и сбоях поставщиков.
 
-**Статус:** этап 1b — реализованы заказы, долговечный inbox платежей, очередь выдачи, миграции PostgreSQL и поставщик A с отдельной БД. Полный запуск Compose и интеграционные проверки PostgreSQL [прошли в CI](https://github.com/krav01/digital-goods-core/actions/runs/34162188953) для `0e77e26`. Поставщик B и испытания гонок независимых процессов — следующие этапы.
+**Статус:** основной поток реализован: заказы, долговечный inbox платежей, очередь выдачи, миграции PostgreSQL и поставщик A с отдельной БД. Полный запуск Compose и интеграционные проверки PostgreSQL [прошли в CI этапа 1b](https://github.com/krav01/digital-goods-core/actions/runs/34162188953). Этап 2 добавляет гонки независимых процессов и SIGKILL-восстановление; результаты проверки конкретного commit доступны в [PR #2](https://github.com/krav01/digital-goods-core/pull/2). Следующий этап — поставщик B и управляемые сбои.
 
 ## Принятые решения
 
@@ -81,9 +81,12 @@ golangci-lint run ./... # v2.13.2
 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 # Dedicated disposable PostgreSQL server; role needs CREATEDB:
 TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/postgres?sslmode=disable' make integration
+TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/postgres?sslmode=disable' make reliability
 ```
 
-`make check` runs formatting, compilation, shuffled unit tests and vet. Integration tests create and drop only uniquely named `dgc_*_test` databases; do not point them at a production server. They cover the HTTP flow, early/replayed/invalid payments, terminal-state conflicts, persisted supplier replay/refusal, modeled worker loss after supplier commit, stale-lease rejection, and restock recovery. These are not yet the multi-process race/fault suite planned for phases 2–3.
+`make check` runs formatting, compilation, shuffled unit tests and vet. Integration tests create and drop only uniquely named `dgc_*_test` databases; do not point them at a production server. They cover the HTTP flow, early/replayed/invalid payments, terminal-state conflicts, persisted supplier replay/refusal, stale-lease rejection, and restock recovery.
+
+`make reliability` runs the phase 2 multi-process scenarios three times with race detection and shuffled order: 50 concurrent webhooks (same/distinct IDs and before order creation), four workers, concurrent supplier requests, last-key contention, SIGKILL before/after transaction boundaries and late-result fencing. Tests print process IDs and scenario outcomes; successful effects are checked in both application and supplier A databases. One crash test waits for the real 15-second lease expiry. Test-only checkpoints pause the production worker through an adapter; they are not production configuration. Requires a Unix-like OS for SIGTERM/SIGKILL; the verified CI platform is recorded with the phase result. See [phase 2 review and limits](docs/reviews/phase-2.md).
 
 CI also builds and starts Compose from a clean checkout and runs the smoke script. Local Docker execution was unavailable in the development sandbox; consult the [CI runs](https://github.com/krav01/digital-goods-core/actions/workflows/ci.yml) for PostgreSQL/container verification.
 

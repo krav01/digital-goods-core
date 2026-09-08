@@ -48,6 +48,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make integration
+      - run: make reliability
 
   compose:
     runs-on: ubuntu-latest
