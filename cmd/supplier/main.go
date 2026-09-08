@@ -22,7 +22,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	options := []supplier.HandlerOption{supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay)}
+	options := []supplier.HandlerOption{
+		supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay),
+		supplier.WithRandomFinalUnavailable(cfg.SupplierFinalUnavailableRate),
+	}
 	if cfg.SupplierForceFinalUnavailable {
 		options = append(options, supplier.WithForcedFinalUnavailable())
 	}
