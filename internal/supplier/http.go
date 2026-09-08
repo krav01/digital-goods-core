@@ -146,7 +146,11 @@ func (c *Client) Inventory(ctx context.Context) ([]Inventory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("supplier inventory: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			slog.Warn("close supplier inventory response", "error", err)
+		}
+	}()
 	if response.StatusCode != http.StatusOK {
 		return nil, errors.New("supplier inventory is unavailable")
 	}
