@@ -1,53 +1,49 @@
-# План реализации и приёмки
+# Implementation and acceptance plan
 
-Каждый этап заканчивается проверенным изменением, понятным diff и кратким отчётом. Модель/усилие ниже — рабочая рекомендация для данного проекта, не результат сравнительного бенчмарка. Перед началом каждого блока напоминать одну настройку; смену модели выполняет пользователь.
+Each stage ends with a verified change, focused diff, and concise report. Model/effort below is a project recommendation, not a comparative benchmark result. Before every work block, remind the user of one configuration; the user chooses model changes.
 
-| Этап | Результат | Граница готовности | Модель / усилие |
+| Stage | Outcome | Done boundary | Model / effort |
 | --- | --- | --- | --- |
-| 0. Архитектура | ADR, модель данных, матрица проверок, отдельный репозиторий | Риски таймаутов/порядка событий определены, границы гарантий явны | GPT-6 Astra / high |
-| 1a. Каркас | Go-модуль, API health/readiness, конфигурация, graceful shutdown, Makefile, Docker Compose, базовая CI | Выполнено локально: сборка, endpoint-тесты, `go vet`, форматирование. Docker Compose описан, но его запуск в этой среде блокирован отсутствием Docker | GPT-5.6 Terra / medium |
-| 1b. Схема и основной поток | Миграции, seed, заказы, inbox, job, одна долговечная заглушка | Выполнено: создание → оплата → выдача через PostgreSQL, отклонение неверной суммы, restock; CI integration и Compose smoke зелёные для `0e77e26` | GPT-6 Astra / high |
-| 2. Гонки и падения | Набор process-тестов в PR #2: 50 вебхуков, SIGKILL, fencing | Барьер готовности: PostgreSQL integration + три повторения `make reliability` в CI PR #2 | GPT-6 Astra / high |
-| 3. Два поставщика | Управляемые/случайные сбои, backoff, неизвестный результат, безопасный A → B | Выполнено: таймаут после выдачи не тратит второй код; fallback только после долговечного отказа | GPT-6 Astra / high |
-| 4. Сверка и восстановление | Структурированные логи, сверка, восстановление после restock | Выполнено: read-only отчёт обнаруживает контролируемые аномалии; очередь восстанавливает заказ после restock | GPT-6 Astra / high |
-| 5. Каталог | Тысячи SKU, запрос остатков, индексы | Воспроизводимые данные и EXPLAIN (ANALYZE, BUFFERS), фактические измерения | GPT-6 Astra / high |
-| 6. Передача | README, сценарии запуска/проверок, записка о масштабировании, фактическое время | Воспроизводимость из чистого clone, race/integration/security-проверки, финальный review | GPT-6 Astra / high |
+| 0. Architecture | ADR, data model, verification matrix, separate repository | Timeout/event-order risks and guarantee boundaries are explicit | GPT-6 Astra / high |
+| 1a. Foundation | Go module, health/readiness API, config, graceful shutdown, Makefile, Compose, base CI | Build, endpoint tests, `go vet`, and formatting verified; Docker was unavailable locally | GPT-5.6 Terra / medium |
+| 1b. Schema and core flow | Migrations, seed data, orders, inbox, job, durable mock | Create → pay → deliver through PostgreSQL, invalid amount rejection, restock; integration and Compose CI green | GPT-6 Astra / high |
+| 2. Races and crashes | Process tests: 50 webhooks, SIGKILL, fencing | PostgreSQL integration plus three `make reliability` repetitions in CI | GPT-6 Astra / high |
+| 3. Two suppliers | Controlled/random failures, backoff, unknown outcome, safe A → B | Timeout after issue does not consume a second code; fallback follows only a durable refusal | GPT-6 Astra / high |
+| 4. Reconciliation and recovery | Structured logs, reconciliation, recovery after restock | Read-only report finds controlled anomalies; queue recovers after restock | GPT-6 Astra / high |
+| 5. Catalog | Thousands of SKUs, availability query, indexes | Reproducible fixture and `EXPLAIN (ANALYZE, BUFFERS)` input; actual measurements remain environment-specific | GPT-6 Astra / high |
+| 6. Handoff | README, reproduction scenarios, scaling note, actual time | Clean-clone reproduction, race/integration/security checks, final review | GPT-6 Astra / high |
 
-Этапы 1–2 обязательны по ТЗ. Этап 3 сильно желателен и входит в план. Этапы 4–5 бонусные; выполняются после готового надёжного ядра. Отдельный денежный журнал — дополнительный бонус этапа 4: если реализуется, использовать сбалансированные проводки с идемпотентным ключом платежа, а не объявлять таблицу событий бухгалтерским ledger.
+Stages 1–2 are mandatory in the assignment. Stage 3 is strongly desired. Stages 4–5 are bonus work after the reliable core. A balanced money ledger is an additional stage-4 bonus and is not claimed here.
 
-## Матрица проверок
+## Acceptance matrix
 
-Этап 2: сценарии A02–A05, A12–A16 и A18 реализованы в [PR #2](https://github.com/krav01/digital-goods-core/pull/2). Точное покрытие и ограничения — [review этапа 2](reviews/phase-2.md). Подтверждать выполнение по CI конкретного commit; supplier B ещё не реализован, поэтому проверки двух поставщиков остаются в этапе 3.
+The process suite in [PR #2](https://github.com/krav01/digital-goods-core/pull/2) implements the concurrency/crash scenarios; the README documents the current reproducible commands. Confirm results against CI for a concrete commit. Supplier B, reconciliation, catalog fixtures, and final delivery documentation were completed in later merged PRs.
 
-Для этапа 1b прошли PostgreSQL-тесты A01, A05, A07, последовательный повтор A04, базовые конфликты A06, модель сбоя A15 и проверка старой аренды A16: [CI для `0e77e26`](https://github.com/krav01/digital-goods-core/actions/runs/34162188953). Дополнительно проверены долговечный отказ A и восстановление после restock. Остальные строки пока запланированы; модель сбоя внутри теста не заменяет проверку независимых процессов на этапе 2.
-
-| ID | Сценарий | Проверяемый результат | Этап |
+| ID | Scenario | Expected result | Stage |
 | --- | --- | --- | --- |
-| A01 | Создать заказ, отправить оплату, дождаться worker | Один код, состояние delivered, совпадение цены/валюты | 1b |
-| A02 | 50 параллельных paid с одним event_id | Одна строка события, одна выдача, один потраченный ключ | 2 |
-| A03 | 50 параллельных paid с разными event_id одного заказа | События сохранены, одна выдача и одна задача заказа | 2 |
-| A04 | Повтор после delivered | Код, статус, учёт оплаты и выдача не меняются | 2 |
-| A05 | Вебхук до заказа; затем создание с заранее известным ID | Событие сохранено, после появления заказа выдача завершается | 1b/2 |
-| A06 | paid затем failed; failed затем paid; одинаковые timestamps | Нет отката финального состояния; конфликт виден в сверке | 1b/4 |
-| A07 | Неверная сумма/валюта; изменённые поля того же event_id | Нет выдачи; событие отклонено/конфликт ID, оригинал не перезаписан | 1b |
-| A08 | Поставщик выдал код, но ответ потерян | Повтор того же request_id возвращает прежний код, B не вызывается | 3 |
-| A09 | A сохраняет окончательный unavailable, B успешен | B выдаёт один код, A не выдаёт даже при позднем повторе | 3 |
-| A10 | A молчит или возвращает обычный 5xx без доказанного отказа | Неопределённость сохраняется, B не вызывается после лимита retries | 3 |
-| A11 | У обоих поставщиков пустой склад; затем пополнение | out_of_stock восстановим; новый цикл только после окончательных отказов | 3/4 |
-| A12 | Два заказа конкурируют за последний ключ | Код принадлежит одному заказу; второй остаётся восстановимым | 2 |
-| A13 | Несколько экземпляров worker забирают одну задачу | Допускаются повторы запросов, не допускаются повторы эффекта | 2 |
-| A14 | Crash после приёма вебхука / оплаты, до обработки job | Inbox/job не теряются; после рестарта выдача завершается | 2 |
-| A15 | Crash после commit выдачи у поставщика, до commit приложения | Повтор восстанавливает прежний код; поставщик тоже перезапускается | 2/3 |
-| A16 | Аренда истекла, новый worker продолжил, старый ответил позже | Старый lease_version не меняет состояние; код единственный | 2 |
-| A17 | A отказал, выбор B сохранён, старый worker повторяет A после смены fault-режима | A возвращает прежний отказ; у B одна выдача | 3 |
-| A18 | Одновременные issue с одинаковым request_id; затем с другим sku/order | Один результат; несовпадающий payload отклонён | 2/3 |
-| A19 | Выдача без оплаты / оплаченный без выдачи (контролируемая аномалия в тестовой БД) | Сверка обнаруживает нарушение; не скрывает его изменением истории | 4 |
-| A20 | Витрина с тысячами SKU и остатками | Проверен план запроса и зафиксированы фактические latency/объём данных | 5 |
+| A01 | Create order, pay, wait for worker | One code, delivered state, matching price/currency | 1b |
+| A02 | 50 parallel paid events with one event ID | One event row, one delivery, one consumed key | 2 |
+| A03 | 50 distinct paid event IDs for one order | Events retained; one delivery and job | 2 |
+| A04 | Replay after delivery | Code, state, payment, and delivery unchanged | 2 |
+| A05 | Webhook before order, then create the known ID | Event retained; delivery finishes after order creation | 1b/2 |
+| A06 | paid then failed; failed then paid | No final-state rollback; conflict is visible in reconciliation | 1b/4 |
+| A07 | Invalid amount/currency or changed same-ID payload | No delivery; event rejected or ID conflicts | 1b |
+| A08 | Supplier issued a code but response was lost | Same request ID returns the old code; B is not called | 3 |
+| A09 | A persists final unavailable, B succeeds | B issues once; A still refuses late replay | 3 |
+| A10 | A hangs or returns ordinary 5xx | Unknown result persists; B is not used | 3 |
+| A11 | Both suppliers empty, then restocked | `out_of_stock` recovers; new cycle follows final refusals only | 3/4 |
+| A12 | Two orders contend for the final key | One owns the code; the other remains recoverable | 2 |
+| A13 | Multiple workers claim one job | Requests may repeat; effects may not | 2 |
+| A14 | Crash after webhook/payment commit before job processing | Inbox/job survive and delivery finishes after restart | 2 |
+| A15 | Crash after supplier commit before application commit | Retry restores the same code | 2/3 |
+| A16 | Lease expires; another worker proceeds; old reply arrives late | Old fence cannot change state; one code | 2 |
+| A17 | A refuses, B selection persists, old A worker retries | A replays refusal; B delivers once | 3 |
+| A18 | Concurrent same-ID issue; then a mismatched payload | One result; mismatched payload rejected | 2/3 |
+| A19 | Delivery without payment / paid without delivery | Reconciliation exposes, rather than rewrites, the anomaly | 4 |
+| A20 | Storefront with thousands of SKUs | Query plan and actual latency/data volume recorded | 5 |
 
-Число HTTP-запросов поставщику может быть больше одного. Считать нужно успешные долговечные операции и расход ключей **в обеих БД поставщиков**, а не только строки `deliveries` приложения. Тесты гонок используют PostgreSQL и независимые процессы, не только mock и `go test -race`.
+Supplier HTTP-call count may exceed one. Count durable successful operations and consumed keys in **both supplier databases**, not just application `deliveries` rows. Race tests use PostgreSQL and independent processes, not only mocks and `go test -race`.
 
-## Порядок проверок
+## Verification order
 
-Сначала форматирование и сборка, затем целевые тесты и vet/lint. После согласованного изменения с высоким риском — relevant integration/race-тесты и проверка инвариантов БД. Security и нагрузочные проверки запускать на соответствующем этапе, а не после каждой правки документации.
-
-Не публиковать фиктивно зелёную CI или команды, которые ещё не работают. Финальный README должен содержать точные команды локальной проверки гонок, таймаута после выдачи, fallback и восстановления, а также ограничения среды и известные компромиссы.
+Run formatting/build first, then targeted tests and vet/lint. After a coherent high-risk change, run relevant integration/race tests and validate database invariants. Run security and load checks at their relevant stages. Never publish invented green CI or commands that were not run. The final README contains exact local commands for races, timeout-after-issue, fallback, recovery, environment limits, and accepted trade-offs.

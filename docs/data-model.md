@@ -1,52 +1,52 @@
-# Модель данных и API
+# Data model and API
 
-Проект схемы; SQL-миграции будут добавлены на следующем этапе. Денежные суммы в БД — `BIGINT` в копейках, валюта — `RUB`. Внешнее поле `amount` сохраняет единицы исходного контракта (рубли): парсинг десятичного числа с максимум двумя знаками без `float64`, проверкой диапазона и преобразованием в копейки. Цена заказа фиксируется сервером по каталогу.
+SQL migrations implement this model. Monetary amounts are stored as `BIGINT` kopecks and currency is `RUB`. The external `amount` field preserves the source contract's ruble unit: a decimal with at most two fractional digits is parsed without `float64`, range-checked, and converted to kopecks. The server snapshots the catalog price onto the order.
 
-## База приложения
+## Application database
 
-| Таблица | Существенные поля / ограничения | Назначение |
+| Table | Key fields / constraints | Purpose |
 | --- | --- | --- |
-| `products` | `sku PK`, name, type, price_minor > 0, currency, active | Каталог; seed из 12 SKU ТЗ |
-| `orders` | `id PK`, sku FK, price_minor, currency, status, paid_at, timestamps | Снимок стоимости и жизненный цикл |
-| `payment_events` | `event_id PK`, order_id без FK, status, amount_minor, currency, created_at, received_at, processing_state, next_attempt_at, error | Inbox; отсутствие FK допускает событие раньше заказа |
-| `delivery_jobs` | `order_id PK/FK`, state, available_at, leased_until, lease_version, attempts, last_error | Одна надёжная задача на заказ |
-| `delivery_operations` | `request_id PK`, order_id FK, supplier, generation, sku, state, reason; unique(order_id, supplier, generation) | Стабильная идентичность внешних операций и история выбора поставщиков |
-| `deliveries` | `order_id PK/FK`, request_id unique FK, supplier, code unique, delivered_at | Единственный завершённый результат заказа; один код не уходит двум заказам |
+| `products` | `sku PK`, name, type, price_minor > 0, currency, active | Catalog seeded with the assignment's 12 SKUs |
+| `orders` | `id PK`, sku FK, price_minor, currency, status, paid_at, timestamps | Price snapshot and lifecycle |
+| `payment_events` | `event_id PK`, order_id without FK, status, amount_minor, currency, created_at, received_at, processing_state, next_attempt_at, error | Inbox; no FK permits an event before its order |
+| `delivery_jobs` | `order_id PK/FK`, state, available_at, leased_until, lease_version, attempts, last_error | One reliable job per order |
+| `delivery_operations` | `request_id PK`, order_id FK, supplier, generation, sku, state, reason; unique(order_id, supplier, generation) | Stable external-operation identity and supplier-selection history |
+| `deliveries` | `order_id PK/FK`, request_id unique FK, supplier, code unique, delivered_at | One completed result per order; a code cannot reach two orders |
 
-Индексы: частичный индекс на готовые inbox-события по `next_attempt_at`; индекс inbox по `order_id` для поиска ранних/конфликтующих событий; индексы job по готовности и просроченным арендам; операции по `order_id`. Точная форма и применение индексов проверяются на реальных SQL-запросах.
+Indexes include a partial index on due inbox events by `next_attempt_at`, an inbox `order_id` index for early/conflicting events, job indexes for readiness and expired leases, and an operation `order_id` index. Their exact form and use are verified against real SQL queries.
 
-Инвариант «выдан только оплаченный» обеспечивается проверкой заказа под блокировкой и одной транзакцией завершения; FK сам по себе этого не гарантирует. Состояние `delivered` и строка `deliveries` изменяются вместе. `UNIQUE(code)` — дополнительная локальная защита, а не доказательство отсутствия второй внешней выдачи.
+The “delivered only after payment” invariant comes from checking the locked order and committing completion in one transaction; an FK alone cannot provide it. The `delivered` state and `deliveries` row change together. `UNIQUE(code)` is an additional local guard, not proof that an external supplier cannot issue twice.
 
-## Каждая база поставщика
+## Each supplier database
 
-| Таблица | Ограничения | Назначение |
+| Table | Constraints | Purpose |
 | --- | --- | --- |
-| `inventory_keys` | key_id PK, code unique, sku, issued_request_id unique nullable | Тестовые ключи по SKU; атомарное выделение доступного ключа |
-| `issue_requests` | request_id PK, order_id, sku, outcome, code, reason; unique(order_id) where outcome = issued | Неизменяемый итог операции: выдано или окончательно отказано |
+| `inventory_keys` | key_id PK, code unique, sku, issued_request_id unique nullable | Test keys by SKU; atomic allocation of an available key |
+| `issue_requests` | request_id PK, order_id, sku, outcome, code, reason; unique(order_id) where outcome = issued | Immutable operation result: issued or finally refused |
 
-Один ключ может быть назначен только одной успешной операции. A/B получают непересекающиеся части исходного пула из 50 кодов; распределение по SKU фиксируется seed-файлом. Генерируемые ключи для нагрузочных тестов маркируются отдельно и также не пересекаются.
+One key can be assigned to only one successful operation. A/B receive non-overlapping portions of the original 50-key pool; SKU allocation is fixed in seed data. Generated load-test keys are separately marked and non-overlapping as well.
 
-## Статусы заказа
+## Order statuses
 
-- `created → paid → delivering → delivered` — основной путь.
-- `created → payment_failed` — финальная неуспешная оплата.
-- `delivering → out_of_stock` — подтверждённое отсутствие товара без незавершённой неизвестной операции.
-- `delivering → delivery_failed` — выдача отложена из-за отказов или неопределённого результата; точная причина хранится в job/operation.
-- `out_of_stock / delivery_failed → delivering` — безопасное восстановление с учётом предыдущих операций.
+- `created → paid → delivering → delivered` — primary path.
+- `created → payment_failed` — final failed payment.
+- `delivering → out_of_stock` — confirmed stock absence without an unfinished unknown operation.
+- `delivering → delivery_failed` — delivery deferred after refusals or an unknown result; the exact reason remains on the job/operation.
+- `out_of_stock / delivery_failed → delivering` — safe recovery accounting for earlier operations.
 
-Финальные `delivered` и `payment_failed` автоматически не меняются. Для каждой пары переходов нужны табличные тесты, включая запрещённые переходы и повторы. Противоречащие платёжные события сохраняются для сверки согласно ADR-001.
+Final `delivered` and `payment_failed` states never change automatically. Table tests cover each transition pair, including prohibited transitions and repeats. Contradictory payment events are retained for reconciliation as defined by ADR-001.
 
-## Планируемые HTTP-эндпоинты
+## HTTP endpoints
 
-| Метод и путь | Вход / ответ |
+| Method and path | Input / response |
 | --- | --- |
-| `POST /orders` | `{sku, order_id?}` → `201` со снимком цены и статусом. Повтор клиентского ID с тем же SKU возвращает существующий заказ (`200`), с другим SKU — `409` |
-| `GET /orders/{id}` | `200` со статусом; код только для `delivered`; неизвестный ID — `404` |
-| `POST /webhooks/payment` | Контракт ТЗ (`event_id`, `order_id`, `status`, `amount`, `currency`, `created_at`); `200` после долговечного приёма/точного повтора; конфликт ID — `409`; неверная форма — `400`; сбой сохранения — `5xx` |
-| `GET /healthz` | Проверка работающего процесса |
-| `GET /readyz` | Проверка доступности БД и применённых миграций |
-| `POST /issue` у A/B | Контракт ТЗ; terminal-error расширение `request_id` и `final` описано в ADR-001 |
+| `POST /orders` | `{sku, order_id?}` → `201` with price snapshot and state. Reusing a client ID with the same SKU returns the existing order (`200`); another SKU returns `409` |
+| `GET /orders/{id}` | `200` with state; code only for `delivered`; unknown ID is `404` |
+| `POST /webhooks/payment` | Assignment contract (`event_id`, `order_id`, `status`, `amount`, `currency`, `created_at`); `200` after durable acceptance/exact replay; conflicting ID is `409`; malformed input is `400`; persistence failure is `5xx` |
+| `GET /healthz` | Process health check |
+| `GET /readyz` | Database availability and applied-migration check |
+| `POST /issue` at A/B | Assignment contract; the terminal-error extension with `request_id` and `final` is defined in ADR-001 |
 
-Платёж по корректно принятому событию может быть позже отклонён проверкой стоимости. HTTP `200` означает «событие надёжно сохранено», а не «товар выдан». Поле `created_at` обязательно валидируется как timestamp, но не используется как единственное доказательство авторитетного статуса.
+A payment event accepted over HTTP can later be rejected by amount validation. HTTP `200` means “the event was durably stored”, not “the item was delivered”. `created_at` is validated as a timestamp but is not used as the sole proof of authoritative ordering.
 
-Тестовые endpoint/CLI для режима отказов и пополнения не должны быть доступны как обычное публичное API. Сверка и каталог добавляются отдельными этапами; аутентификация публичного production-магазина за пределами ТЗ.
+Test-only endpoints or CLIs for fault modes and restocking must not be exposed as normal public API. Reconciliation and catalog functionality are independent stages; public-production authentication is outside the assignment scope.

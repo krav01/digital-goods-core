@@ -1,99 +1,76 @@
-# ADR-001: надёжная выдача цифровых товаров
+# ADR-001: Reliable delivery of digital goods
 
-Статус: принято для реализации. Go и модульный монолит с ручным DI согласованы с владельцем проекта. Ниже описан проект, а не уже проверенные гарантии работающего кода.
+Status: accepted and implemented. Go and a modular monolith with manual DI were agreed with the project owner.
 
-## Контекст и цель
+## Context and goal
 
-Вебхуки доставляются повторно и вне порядка. Воркеры могут работать одновременно и завершаться в любой момент. Поставщик может выдать код и потерять ответ. Требуется один факт выдачи на оплаченный заказ и отсутствие повторного расходования ключей.
+Webhooks may be repeated and arrive out of order. Workers may run concurrently and stop at any time. A supplier may issue a code and lose its response. The goal is one delivery effect per paid order, without consuming a key twice.
 
-Гарантия безопасности действует при сохранности PostgreSQL и соблюдении контракта заглушками. Завершение доставки дополнительно требует восстановления доступности БД/поставщика, работающего воркера и наличия товара. Вечная недоступность A при неизвестном результате не позволяет одновременно гарантировать завершение и отсутствие двойной выдачи у независимого B.
+Safety depends on PostgreSQL durability and mock-supplier contract compliance. Completion also requires a healthy database and supplier, an active worker, and available stock. When A is permanently unavailable after an unknown result, it is impossible to guarantee both completion and no duplicate issuance at independent B.
 
-## Компоненты и границы
+## Components and boundaries
 
-Один Go-модуль `github.com/krav01/digital-goods-core`. Планируемые точки входа:
+The single Go module is `github.com/krav01/digital-goods-core`:
 
-- `cmd/api`: HTTP API, валидация запросов и приём событий оплаты.
-- `cmd/worker`: обработка inbox и выдача с повторами и восстановлением.
-- `cmd/supplier`: одна заглушка; два экземпляра с разными хранилищами для A/B.
-- Команда миграций и тестовые сценарии добавляются по мере реализации.
+- `cmd/api` validates HTTP requests and accepts payment events.
+- `cmd/worker` processes the inbox and performs retried, recoverable delivery.
+- `cmd/supplier` runs one mock; two instances with separate storage represent A/B.
+- `cmd/migrate` applies scoped embedded migrations; `cmd/reconcile` emits a read-only report.
 
-В `internal/` пакеты появляются по фактической необходимости: `order`, `payment`, `delivery`, `supplier`, `postgres`, `httpapi`. Направление зависимостей: HTTP/SQL-адаптеры зависят от прикладных типов, прикладная логика не импортирует транспортные пакеты. Узкие интерфейсы определяются потребителем только там, где нужна заменяемая граница. Generic repository и контейнер DI не нужны.
+HTTP/SQL adapters depend on application types; application logic does not import transport packages. Narrow interfaces live with their consumer. Generic repositories and a DI container are not needed. The application has one database; each supplier has another database reached only over HTTP. Tests may inspect all databases, business logic may not. A/B key pools never overlap.
 
-Одна база приложения. Каждому поставщику выделена своя база: приложение обращается к нему только по HTTP. Проверки могут читать все тестовые БД, бизнес-логика — нет. Пулы тестовых ключей A/B не пересекаются.
+## Payment intake: durable inbox
 
-## Приём платежей: durable inbox
+1. Validate the event shape, permitted status, and exact monetary representation.
+2. Persist the event with a unique `event_id` in a short transaction, then return `200 OK`.
+3. The same ID with the same meaningful fields is a safe replay; changed fields produce `409 Conflict` without altering the original event.
+4. Return `5xx` when persistence is unavailable so the sender retries.
+5. The inbox worker locks the existing order, validates price/currency and transition, updates the order, creates its single delivery job, and marks the event processed in one transaction.
 
-1. Проверить форму события, допустимый статус и точное представление суммы.
-2. В короткой транзакции сохранить событие с уникальным `event_id`; только после commit вернуть `200 OK`.
-3. Тот же `event_id` и те же смысловые поля — безопасный повтор. Изменённые поля под тем же ID — `409 Conflict`, исходное событие не изменяется.
-4. При недоступности БД вернуть `5xx`, чтобы отправитель повторил доставку.
-5. Inbox worker находит необработанные события. Под блокировкой существующего заказа проверяет сумму/валюту и допустимость перехода. Изменение заказа, создание единственной задачи выдачи и отметка события как обработанного выполняются в одной транзакции.
+Before an order exists, an event stays `waiting_order`: it is not lost and cannot create an order without SKU/price. The API accepts a client-provided `order_id` for reproducible early-webhook tests. The assignment has no payment-attempt ID or authoritative state version, so `created_at` cannot define ordering. Consequently, `paid` after payment is a replay, `failed` after payment/delivery does not roll it back, `paid` after `payment_failed` is a reconciliation conflict, and an amount/currency mismatch is rejected without delivery.
 
-До появления заказа событие остаётся `waiting_order`: не теряется и не создаёт заказ без SKU/цены. Создание заказа не блокирует строки inbox; периодический обработчик гарантирует повторную проверку. Для воспроизводимого раннего вебхука API допускает клиентский `order_id`, известный до создания заказа.
+## Delivery job in PostgreSQL
 
-В ТЗ нет `payment_id`, номера попытки или авторитетной версии состояния. Поэтому нельзя трактовать `created_at` как надёжный порядок переходов. Принята консервативная политика:
+`delivery_jobs` is both a transactional outbox and work queue. A worker claims a ready job through `FOR UPDATE SKIP LOCKED`, sets a lease and increases `lease_version`, then commits before HTTP I/O. It creates or loads a durable supplier operation under short locks and calls the supplier outside the transaction. A completion transaction applies the result only when the lease version still matches.
 
-- `paid` после уже подтверждённой оплаты не меняет заказ и не создаёт новое движение денег.
-- `failed` после `paid`/выдачи не откатывает оплату; противоречие остаётся в журнале для сверки.
-- `payment_failed` остаётся финальным, как требует ТЗ. Последующий `paid` фиксируется как конфликт для ручной сверки без автоматической выдачи.
-- Несовпадение суммы/валюты фиксируется как отклонённое событие; товар не выдаётся.
+An expired lease permits another worker to continue. Fencing prevents an old worker from changing local state, while the persisted `request_id` and durable supplier idempotency protect the external effect. Completion atomically writes `delivery`, marks the order `delivered`, and closes the job. A crash after supplier issuance but before the application commit repeats the same operation rather than issuing another code.
 
-Это не модель нескольких попыток оплаты. Если такая функциональность потребуется, контракт необходимо расширить идентификатором попытки/платежа и правилами авторитетного статуса.
+Transactions are short and lock in a consistent inbox event → order → delivery job order. Deadlock/serialization errors may retry the local transaction; network calls do not join that retry.
 
-## Выдача: задача в PostgreSQL
+## Mock contract and safe fallback
 
-`delivery_jobs` одновременно является transactional outbox и очередью работ. Дополнительный брокер и отдельный outbox-dispatcher на этом этапе не требуются.
+The base supplier contract is `POST /issue` with `request_id`, `order_id`, and `sku`; a successful replay must return the same code. Safe fallback needs durable final refusals as well as durable successes. The mocks bind each ID to its original order/SKU and atomically reserve one key or persist an immutable refusal. A mismatched replay conflicts; concurrent matching requests read the same result.
 
-Worker коротко захватывает готовую задачу с `FOR UPDATE SKIP LOCKED`, устанавливает срок аренды и увеличивает `lease_version`, затем делает commit. Дальше он под короткими блокировками заказа/задачи создаёт или читает сохранённую операцию поставщика. HTTP-запрос выполняется вне транзакции. Результат применяется отдельной транзакцией при совпадении версии аренды.
-
-Истёкшая аренда позволяет другому worker продолжить работу. Старый worker больше не может менять локальное состояние. При этом fencing в приложении сам по себе не отменяет его HTTP-вызов: безопасность внешнего эффекта обеспечивает сохранённый `request_id` и долговечная идемпотентность поставщика.
-
-Завершение атомарно сохраняет `delivery`, переводит заказ в `delivered` и закрывает job. Падение после внешней выдачи до этого commit приводит к повтору той же операции, а не к выдаче нового кода.
-
-Приложение использует короткие транзакции и согласованный порядок блокировок: inbox event → order → delivery job. Захват аренды job — отдельная транзакция без дальнейшего ожидания order в ней. Ошибки deadlock/serialization допускают ограниченный повтор всей локальной транзакции; сетевые вызовы в этот повтор не входят.
-
-## Контракт заглушки и безопасный fallback
-
-Базовый контракт ТЗ: `POST /issue` с `request_id`, `order_id`, `sku`; успешный повтор обязан возвращать тот же код. Для безопасного переключения недостаточно кэшировать только успехи. Проект явно усиливает контракт тестовых заглушек: окончательные отказы тоже долговечны и неизменяемы для конкретного `request_id`.
-
-Операция хранит привязку ID к исходным `order_id`/`sku`. Повтор с другими полями — конфликт. При первом запросе поставщик в транзакции либо резервирует один ключ и сохраняет успех, либо сохраняет окончательный отказ. Конкурирующие запросы по тому же ID читают один и тот же результат; решение об отказе и выдача не могут состояться одновременно.
-
-Задержка/потеря ответа после commit не удаляет результат. Перезапуск процесса не очищает историю операций. Окончательный отказ остаётся отказом после пополнения склада и изменения режима сбоев: это защищает от запоздалых запросов старого worker.
-
-| Наблюдение приложения | Решение |
+| Application observation | Action |
 | --- | --- |
-| Успех с корректным `request_id` и кодом | Атомарно завершить выдачу |
-| Таймаут, разрыв соединения, неожиданный ответ, обычный `5xx` | Результат неизвестен; повторять тот же ID у того же поставщика |
-| Подтверждённый долговечный отказ заглушки для этого ID | Разрешено сохранить выбор B и новый ID операции B |
-| Лимит быстрых повторов исчерпан, результат неизвестен | Отложить проверку с тем же ID; зафиксировать неопределённость, не переключаться |
+| Successful response with matching `request_id` and code | Atomically complete delivery |
+| Timeout, connection loss, malformed response, ordinary `5xx` | Result is unknown; retry the same ID at the same supplier |
+| Confirmed durable final refusal for that ID | Persist choice of B and create B's operation ID |
+| Fast retries exhausted while outcome is unknown | Defer another check with the same ID; do not fall back |
 
-Для подтверждённого отказа заглушка возвращает структурированный ответ с `status: error`, `reason`, `request_id` и `final: true`. Это документированное дополнение к ТЗ. Режим «A недоступен» для теста безопасного fallback возвращает сохранённый терминальный `unavailable`; режим без ответа проверяется отдельно как неопределённый результат. Сам по себе HTTP-код `503` доказательством отказа не является.
+For a confirmed refusal, the mock returns `status: error`, `reason`, `request_id`, and `final: true`. This is a documented extension to the assignment. `503` alone is never proof of refusal. A/B calls for one order are never parallel. The A → B choice is persisted before B is called. A new cycle after restock is allowed only after every earlier operation finally refused; unknown operations retain their original ID.
 
-Параллельные вызовы разных поставщиков для одного заказа запрещены. Переключение A → B сохраняется в БД до вызова B. Новый цикл после пополнения допустим только когда все предыдущие операции окончательно отказали; он получает новый ID. Неопределённая операция всегда продолжает использовать прежний ID. Значение ID никогда не генерируется заново на обычный retry.
+Backoff uses jitter and a cap. HTTP calls have deadlines and observe `context.Context`. Random failure modes are configurable, while tests use deterministic controls and barriers rather than depending on chance.
 
-Backoff с jitter и верхней границей, ограничение числа конкурентных вызовов, HTTP deadlines и остановка по `context.Context`. Случайные отказы настраиваются; тесты используют управляемые сценарии/seed и барьеры, а не надежду на случайное воспроизведение.
+## Recovery and observability
 
-## Восстановление и наблюдаемость
+Reconciliation reports pending-order events, payment conflicts, paid orders without delivery, delivery without payment, expired leases, and unknown supplier operations. `out_of_stock` and `delivery_failed` are recoverable, but an order state never permits fallback after an unknown supplier result.
 
-Сверка показывает ожидающие заказ события, конфликты оплаты, оплаченные без выдачи, выдачи без подтверждённой оплаты, просроченные аренды и неопределённые операции. `out_of_stock`/`delivery_failed` восстановимы, но состояние заказа не отменяет запрет fallback при неизвестном результате.
+Structured logs include `order_id`, `event_id`, `request_id`, supplier, attempt, outcome, and duration. Codes and secrets are not logged. After a forced stop, the durable inbox, job, and supplier operation remain the recovery source.
 
-Логи содержат `order_id`, `event_id`, `request_id`, поставщика, номер попытки, исход и длительность; коды товара и секреты не логируются. При принудительном завершении процесса durable inbox/job/операция поставщика остаются источником восстановления.
+## Alternatives and revisit triggers
 
-## Альтернативы и пересмотр
+- Redis/RabbitMQ are deferred to avoid a second atomicity boundary; revisit after a measured PostgreSQL-queue bottleneck.
+- `sync.Mutex` cannot provide exactly-once behavior across processes or restarts.
+- A transaction around HTTP holds locks and cannot undo an external effect.
+- Fallback after N timeouts may consume two items and is rejected.
+- Infinite rapid retries create load and are replaced by deferred checks.
 
-- Redis/RabbitMQ: пока не добавляются, чтобы не создавать вторую границу атомарности. Пересмотр после измеренного упора в PostgreSQL-очередь.
-- `sync.Mutex` для exactly-once: недостаточен между процессами и после рестарта.
-- Одна длинная транзакция вокруг HTTP: удерживает блокировки и всё равно не откатывает внешний эффект.
-- Fallback после N таймаутов: может потратить два товара; отклонён.
-- Бесконечный быстрый retry: создаёт нагрузку; заменён отложенной проверкой.
+If a real supplier lacks durable idempotency and a final-refusal/status/cancellation contract, these guarantees cannot be transferred unchanged; require a new contract or explicitly weaker semantics.
 
-Если реальный поставщик не поддерживает долговечную идемпотентность и окончательный отказ/проверку/отмену операции, текущие гарантии нельзя просто перенести на него. Нужен новый контракт или явно более слабая гарантия.
+## Verified primary sources
 
-## Проверенные первичные источники
-
-- [PostgreSQL: row locks](https://www.postgresql.org/docs/current/explicit-locking.html): блокировки строк действуют до завершения транзакции.
-- [PostgreSQL: SELECT / SKIP LOCKED](https://www.postgresql.org/docs/current/sql-select.html): пропуск занятых строк применим для нескольких потребителей очереди, не для согласованного чтения витрины.
-- [Go: организация модуля](https://go.dev/doc/modules/layout).
+- [PostgreSQL: row locks](https://www.postgresql.org/docs/current/explicit-locking.html): row locks last until transaction completion.
+- [PostgreSQL: SELECT / SKIP LOCKED](https://www.postgresql.org/docs/current/sql-select.html): skipping locked rows is appropriate for multiple queue consumers, not consistent storefront reads.
+- [Go module layout](https://go.dev/doc/modules/layout).
 - [pgxpool](https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool).
-
-Источники подтверждают используемые механизмы; весь протокол и его гарантии ещё необходимо проверить реализацией и состязательными тестами.
