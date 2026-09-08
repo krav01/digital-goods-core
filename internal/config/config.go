@@ -22,6 +22,7 @@ type Config struct {
 	SupplierAfterIssueDelay       time.Duration
 	SupplierForceFinalUnavailable bool
 	SupplierFinalUnavailableRate  int
+	SupplierTransientErrorRate    int
 }
 
 func FromEnv() (Config, error) {
@@ -69,6 +70,16 @@ func FromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("SUPPLIER_FINAL_UNAVAILABLE_PERCENT must be between 0 and 100")
 		}
 		config.SupplierFinalUnavailableRate = rate
+	}
+	if rawRate := strings.TrimSpace(os.Getenv("SUPPLIER_TRANSIENT_ERROR_PERCENT")); rawRate != "" {
+		rate, err := strconv.Atoi(rawRate)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse SUPPLIER_TRANSIENT_ERROR_PERCENT: %w", err)
+		}
+		if rate < 0 || rate > 100 {
+			return Config{}, fmt.Errorf("SUPPLIER_TRANSIENT_ERROR_PERCENT must be between 0 and 100")
+		}
+		config.SupplierTransientErrorRate = rate
 	}
 
 	return config, nil

@@ -25,6 +25,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	options := []supplier.HandlerOption{
 		supplier.WithAfterIssueDelay(cfg.SupplierAfterIssueDelay),
 		supplier.WithRandomFinalUnavailable(cfg.SupplierFinalUnavailableRate),
+		supplier.WithRandomTransientError(cfg.SupplierTransientErrorRate),
 	}
 	if cfg.SupplierForceFinalUnavailable {
 		options = append(options, supplier.WithForcedFinalUnavailable())

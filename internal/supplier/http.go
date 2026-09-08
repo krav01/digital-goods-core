@@ -36,6 +36,7 @@ type handlerOptions struct {
 	afterIssueDelay       time.Duration
 	forceFinalUnavailable bool
 	randomUnavailableRate int
+	transientErrorRate    int
 }
 
 func WithAfterIssueDelay(delay time.Duration) HandlerOption {
@@ -48,6 +49,10 @@ func WithForcedFinalUnavailable() HandlerOption {
 
 func WithRandomFinalUnavailable(rate int) HandlerOption {
 	return func(options *handlerOptions) { options.randomUnavailableRate = rate }
+}
+
+func WithRandomTransientError(rate int) HandlerOption {
+	return func(options *handlerOptions) { options.transientErrorRate = rate }
 }
 
 func NewHandler(store Store, options ...HandlerOption) http.Handler {
@@ -79,6 +84,10 @@ func NewHandler(store Store, options ...HandlerOption) http.Handler {
 		var req delivery.Request
 		if err := httpjson.Decode(w, r, &req); err != nil {
 			httpjson.Error(w, 400, "invalid request")
+			return
+		}
+		if shouldRefuseRandomly(config.transientErrorRate) {
+			httpjson.Error(w, 503, "temporarily unavailable")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
